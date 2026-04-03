@@ -188,6 +188,16 @@ export function useCanvasSync(session: Session | null, username?: string) {
     if (data?.id) await loadCanvasById(data.id);
   }, [loadCanvasById, session?.user?.id]);
 
+  const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string) => {
+    const { data, error } = await supabase.rpc('resolve_user_canvas', {
+      p_owner_username: ownerUsername,
+      p_canvas_name: name,
+    });
+    if (!error && data) {
+      await loadCanvasById(data as string);
+    }
+  }, [loadCanvasById]);
+
   const saveCanvas = useCallback(() => {
     if (!session?.user?.id || !canvasIdRef.current || isLoadingRef.current) return;
 
@@ -274,6 +284,7 @@ export function useCanvasSync(session: Session | null, username?: string) {
     canvases,
     selectCanvas,
     selectCanvasByName,
+    selectCanvasByRoute,
     createCanvas,
   };
 }

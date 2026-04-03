@@ -40,9 +40,14 @@ export function useAuth() {
 
   const signInWithGoogle = async () => {
     const configuredRedirect = import.meta.env.VITE_AUTH_REDIRECT_TO?.trim();
-    const redirectTo = configuredRedirect && configuredRedirect.length > 0
+    let redirectTo = configuredRedirect && configuredRedirect.length > 0
       ? configuredRedirect
       : `${window.location.origin}/`;
+    // Enforce clean path-based routing (no hash-based redirects).
+    redirectTo = redirectTo.replace('/#/', '/');
+    if (redirectTo.includes('#')) {
+      redirectTo = `${window.location.origin}/`;
+    }
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {

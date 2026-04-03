@@ -7,6 +7,8 @@ interface CanvasSidebarProps {
   currentCanvasId: string | null;
   onCreateCanvas: () => void;
   onSelectCanvas: (id: string) => void;
+  widthPercent: number;
+  onResizeStart: (e: React.MouseEvent) => void;
 }
 
 export function CanvasSidebar({
@@ -15,11 +17,20 @@ export function CanvasSidebar({
   currentCanvasId,
   onCreateCanvas,
   onSelectCanvas,
+  widthPercent,
+  onResizeStart,
 }: CanvasSidebarProps) {
   if (!loggedInUserId) return null;
 
   return (
-    <aside className="fixed left-4 top-16 bottom-4 z-[60] w-64 border border-border bg-card/95 backdrop-blur-sm">
+    <aside
+      className="fixed left-0 top-0 bottom-0 z-[60] border-r border-border bg-card/95 backdrop-blur-sm"
+      style={{ width: `${widthPercent}%` }}
+    >
+      <div
+        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/60"
+        onMouseDown={onResizeStart}
+      />
       <div className="px-3 py-2 border-b border-border flex items-center justify-between">
         <span className="text-xs font-mono text-foreground">Your Canvases</span>
         <button

@@ -19,13 +19,14 @@ interface AppHeaderProps {
   onSignOut: () => void;
   currentCanvasId?: string | null;
   currentCanvasName?: string | null;
+  leftOffsetPercent?: number;
 }
 
 function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
-export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId, currentCanvasName }: AppHeaderProps) {
+export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId, currentCanvasName, leftOffsetPercent = 0 }: AppHeaderProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -68,8 +69,8 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
       const usernameSlug = slugifyUsername(user.username || 'user');
       const canvasSlug = encodeURIComponent((currentCanvasName || '').trim());
       const shareUrl = canvasSlug
-        ? `${window.location.origin}/#/${usernameSlug}/view/${canvasSlug}`
-        : `${window.location.origin}/#/view/${token}`;
+        ? `${window.location.origin}/${usernameSlug}/view/${canvasSlug}`
+        : `${window.location.origin}/view/${token}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success('Share link copied!');
     } catch { toast.error('Failed to share'); }
@@ -78,27 +79,28 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
 
   return (
     <>
-      {/* Top left - App name + menu */}
-      <div className="fixed top-4 left-4 z-50 flex items-center gap-2">
-        <div className="w-7 h-7 bg-foreground flex items-center justify-center">
-          <span className="text-background text-xs font-bold font-mono">C</span>
+      <header
+        className="fixed top-0 right-0 z-50 h-14 border-b border-border bg-card/95 backdrop-blur-sm flex items-center justify-between px-4"
+        style={{ left: `${leftOffsetPercent}%` }}
+      >
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 bg-foreground flex items-center justify-center">
+            <span className="text-background text-xs font-bold font-mono">C</span>
+          </div>
+          <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
+          <div className="relative">
+            <button onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
+              <MoreVertical size={14} />
+            </button>
+            {showMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+                <AppMenu onClose={() => setShowMenu(false)} />
+              </>
+            )}
+          </div>
         </div>
-        <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
-        <div className="relative">
-          <button onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
-            <MoreVertical size={14} />
-          </button>
-          {showMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-              <AppMenu onClose={() => setShowMenu(false)} />
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Top right */}
-      <div className="fixed top-4 right-4 z-50 flex items-center gap-2">
+        <div className="flex items-center gap-2">
         {/* Extension button */}
         <button
           onClick={() => toast.info('Browser extension coming soon!')}
@@ -154,7 +156,8 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
             )}
           </div>
         )}
-      </div>
+        </div>
+      </header>
     </>
   );
 }

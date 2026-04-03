@@ -8,7 +8,7 @@ import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 export default function SharedCanvas() {
   useThemeTime();
-  const { token, canvasName } = useParams<{ token?: string; canvasName?: string }>();
+  const { token, username, canvasName } = useParams<{ token?: string; username?: string; canvasName?: string }>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const { zoom, setZoom, setPan } = useCanvasStore();
@@ -24,16 +24,15 @@ export default function SharedCanvas() {
           .eq('share_token', token)
           .single();
         canvasId = shared?.canvas_id || null;
-      } else if (canvasName) {
+      } else if (canvasName && username) {
         const decodedName = decodeURIComponent(canvasName);
-        const { data: sharedByName } = await supabase
-          .from('canvases')
-          .select('id')
-          .eq('name', decodedName)
-          .order('updated_at', { ascending: false })
-          .limit(1)
+        const { data: sharedByRoute } = await supabase
+          .from('shared_canvases')
+          .select('canvas_id')
+          .eq('owner_username', username)
+          .eq('canvas_name', decodedName)
           .maybeSingle();
-        canvasId = sharedByName?.id || null;
+        canvasId = sharedByRoute?.canvas_id || null;
       }
 
       if (!canvasId) {
@@ -63,7 +62,7 @@ export default function SharedCanvas() {
     };
 
     load();
-  }, [token, canvasName]);
+  }, [token, username, canvasName]);
 
   if (loading) {
     return (
