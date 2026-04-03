@@ -26,6 +26,11 @@ function formatDayTimeName(date = new Date()) {
   return `${day}-${hh}-${mm}`;
 }
 
+function isLegacyUsernameCanvasName(name: string | null | undefined) {
+  if (!name) return false;
+  return /'s Canvas$/i.test(name.trim());
+}
+
 function isBlankSnapshot(snapshot: LocalCanvasSnapshot | null) {
   if (!snapshot) return true;
   const noBlocks = (snapshot.blocks || []).length === 0;
@@ -69,6 +74,7 @@ export function useCanvasSync(session: Session | null, username?: string) {
   const canvasIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const isLoadingRef = useRef(false);
+  const loadSeqRef = useRef(0);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
   const [currentCanvasName, setCurrentCanvasName] = useState<string | null>(null);
@@ -84,12 +90,15 @@ export function useCanvasSync(session: Session | null, username?: string) {
   }, []);
 
   const loadCanvasById = useCallback(async (canvasId: string) => {
+    const seq = ++loadSeqRef.current;
     isLoadingRef.current = true;
     const { data } = await supabase
       .from('canvases')
       .select('*')
       .eq('id', canvasId)
       .single();
+
+    if (seq !== loadSeqRef.current) return;
 
     if (data) {
       canvasIdRef.current = data.id;
@@ -140,6 +149,18 @@ export function useCanvasSync(session: Session | null, username?: string) {
 
     if (first?.id) {
       await loadCanvasById(first.id);
+      // Fix old default canvas name once, so URL stays in the new pattern.
+      if (isLegacyUsernameCanvasName(first.name)) {
+        const newName = formatDayTimeName();
+        const { error } = await supabase
+          .from('canvases')
+          .update({ name: newName })
+          .eq('id', first.id);
+        if (!error) {
+          setCurrentCanvasName(newName);
+          await refreshCanvases(userId);
+        }
+      }
     } else {
       const canvasName = formatDayTimeName();
       const { data: newCanvas } = await supabase
@@ -197,6 +218,33 @@ export function useCanvasSync(session: Session | null, username?: string) {
       await loadCanvasById(data as string);
     }
   }, [loadCanvasById]);
+
+  const deleteCanvases = useCallback(async (ids: string[]) => {
+    if (!session?.user?.id) return;
+    if (!ids.length) return;
+
+    // Invalidate any in-flight loads/saves.
+    loadSeqRef.current += 1;
+    isLoadingRef.current = true;
+
+    const { error } = await supabase
+      .from('canvases')
+      .delete()
+      .in('id', ids);
+
+    if (!error) {
+      const list = await refreshCanvases(session.user.id);
+      const next = list[0];
+      if (next?.id) {
+        await loadCanvasById(next.id);
+      } else {
+        // No canvases left: create a new empty one in the usual pattern.
+        await createCanvas();
+      }
+    }
+
+    isLoadingRef.current = false;
+  }, [createCanvas, loadCanvasById, refreshCanvases, session?.user?.id]);
 
   const saveCanvas = useCallback(() => {
     if (!session?.user?.id || !canvasIdRef.current || isLoadingRef.current) return;
@@ -286,5 +334,6 @@ export function useCanvasSync(session: Session | null, username?: string) {
     selectCanvasByName,
     selectCanvasByRoute,
     createCanvas,
+    deleteCanvases,
   };
 }

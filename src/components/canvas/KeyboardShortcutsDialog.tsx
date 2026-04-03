@@ -2,9 +2,9 @@ import { X } from 'lucide-react';
 
 const SHORTCUTS = [
   { section: 'Tools', items: [
-    ['Note', 'N'], ['Link', 'L'], ['Todo', 'T'], ['Media', 'M'],
-    ['Pencil', 'P'], ['Eraser', 'E'], ['Text', 'X'], ['Shape', 'S'],
-    ['Line', '-'], ['Arrow', 'A'], ['Select', 'V'],
+    ['Note', 'Ctrl N'], ['Link', 'Ctrl L'], ['Todo', 'Ctrl T'], ['Media', 'Ctrl M'],
+    ['Pencil', 'Ctrl P'], ['Eraser', 'Ctrl E'], ['Text', 'Ctrl X'], ['Shape', 'Ctrl S'],
+    ['Line', 'Ctrl -'], ['Arrow', 'Ctrl A'], ['Select', 'Ctrl V'],
   ]},
   { section: 'View', items: [
     ['Zoom in', 'Ctrl +'], ['Zoom out', 'Ctrl -'], ['Zoom to 100%', 'Ctrl 0'],

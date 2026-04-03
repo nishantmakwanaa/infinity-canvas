@@ -41,18 +41,16 @@ export default function Manual() {
         <section className="mb-10">
           <h2 className="text-xl font-semibold font-mono mb-3">Guides</h2>
           <ul className="space-y-2 text-sm font-mono text-muted-foreground">
-            <li className="border-b border-border pb-2">Files</li>
-            <li className="border-b border-border pb-2">Sharing</li>
-            <li className="border-b border-border pb-2">Publishing</li>
-            <li className="border-b border-border pb-2">Troubleshooting</li>
-            <li>FAQ</li>
+            <li className="border-b border-border pb-2">Coming soon</li>
           </ul>
         </section>
 
         <section className="mb-10">
           <h2 className="text-xl font-semibold font-mono mb-3">Documents</h2>
           <ul className="space-y-2 text-sm font-mono text-muted-foreground">
-            <li>Legal summary</li>
+            <li className="leading-relaxed">
+              Legal summary: This project is owned by Nishant Makwana. Do not copy, reupload, or redistribute this project or its source code without explicit permission.
+            </li>
           </ul>
         </section>
 
@@ -61,22 +59,17 @@ export default function Manual() {
           <p className="text-sm text-muted-foreground font-mono mb-3">Connect with Nishant on:</p>
           <ul className="space-y-2 text-sm font-mono">
             <li>
-              <a href="https://nishantmakwana.tech" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
-                Portfolio
-              </a>
-            </li>
-            <li>
-              <a href="https://github.com/nishantmakwana" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
+              <a href="https://github.com/nishantmakwanaa" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
                 GitHub
               </a>
             </li>
             <li>
-              <a href="https://x.com/nishantmakwana" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
+              <a href="https://x.com/wordsofnishant" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
                 Twitter/X
               </a>
             </li>
             <li>
-              <a href="https://linkedin.com/in/nishantmakwana" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
+              <a href="https://linkedin.com/in/nishantmakwanaa" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
                 LinkedIn
               </a>
             </li>

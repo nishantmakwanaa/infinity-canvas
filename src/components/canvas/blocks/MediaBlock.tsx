@@ -75,11 +75,11 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   const isGifUrl = hasUrl && isGif(normalizedUrl);
 
   return (
-    <div className="p-3 h-full flex flex-col gap-2 min-h-0">
+    <div className="p-2 h-full flex flex-col gap-1.5 min-h-0">
       {!readOnly && (
         <div className="flex items-center gap-1">
           <input
-            className="flex-1 bg-transparent text-xs font-mono text-muted-foreground focus:outline-none placeholder:text-muted-foreground border-b border-border pb-1"
+            className="flex-1 bg-transparent text-[10px] font-mono text-muted-foreground focus:outline-none placeholder:text-muted-foreground border-b border-border pb-1"
             placeholder="Paste media URL..."
             value={block.url || ''}
             onChange={(e) => updateBlock(block.id, { url: e.target.value })}
@@ -104,17 +104,17 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
             <video
               ref={videoRef}
               src={normalizedUrl}
-              className="w-full h-full object-contain"
+              className="w-full h-full object-cover"
               loop
               autoPlay
               muted={muted}
               playsInline
             />
             <div className="absolute bottom-1 right-1 flex gap-1">
-              <button onClick={togglePlay} className="w-6 h-6 bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors">
+              <button onClick={togglePlay} className="w-5 h-5 bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors">
                 {playing ? <Pause size={10} /> : <Play size={10} />}
               </button>
-              <button onClick={toggleMute} className="w-6 h-6 bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors">
+              <button onClick={toggleMute} className="w-5 h-5 bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors">
                 {muted ? <VolumeX size={10} /> : <Volume2 size={10} />}
               </button>
             </div>

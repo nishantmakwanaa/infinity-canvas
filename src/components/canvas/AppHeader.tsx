@@ -95,7 +95,7 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
             {showMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-                <AppMenu onClose={() => setShowMenu(false)} />
+                <AppMenu onClose={() => setShowMenu(false)} isLoggedIn={Boolean(user)} />
               </>
             )}
           </div>

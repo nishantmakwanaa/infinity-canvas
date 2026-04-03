@@ -43,6 +43,8 @@ function toEmbedUrl(url: string) {
 
 export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
+  const setPan = useCanvasStore((s) => s.setPan);
+  const setZoom = useCanvasStore((s) => s.setZoom);
   const inputRef = useRef<HTMLInputElement>(null);
   const normalizedUrl = normalizeUrl(block.url || '');
   const domain = getDomain(normalizedUrl);
@@ -87,6 +89,11 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
     }
   };
 
+  const handleResetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
   if (readOnly) {
     return (
       <div className="p-3 h-full flex flex-col gap-2">
@@ -95,12 +102,17 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
           <span className="text-sm font-mono text-foreground truncate">{block.content || domain || 'Link'}</span>
         </div>
         {normalizedUrl && domain && (
-          <div className="flex-1 border border-border bg-secondary/20 overflow-hidden">
+          <div
+            className="flex-1 border border-border bg-secondary/20 overflow-hidden relative"
+            onContextMenu={(e) => e.preventDefault()}
+          >
             {embedUrl ? (
-              <iframe src={embedUrl} className="w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+              <iframe src={embedUrl} className="w-full h-full pointer-events-none" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
             ) : (
-              <iframe src={normalizedUrl} className="w-full h-full" title={block.content || domain} />
+              <iframe src={normalizedUrl} className="w-full h-full pointer-events-none" title={block.content || domain} />
             )}
+            {/* Overlay to guarantee browser context menu never opens on embeds */}
+            <div className="absolute inset-0" />
           </div>
         )}
       </div>
@@ -158,7 +170,7 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
           <DialogHeader>
             <DialogTitle className="text-sm font-mono">Website actions</DialogTitle>
             <DialogDescription className="text-xs font-mono">
-              Paste, select, and open this website URL.
+              Paste, select, and open this website URL. Reset resets the canvas view.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -174,6 +186,9 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
             </button>
             <button className="h-8 px-3 border border-border text-xs font-mono" onClick={handlePasteIntoUrl}>
               Paste
+            </button>
+            <button className="h-8 px-3 border border-border text-xs font-mono" onClick={handleResetView}>
+              Reset
             </button>
             <button className="h-8 px-3 border border-border bg-foreground text-background text-xs font-mono" onClick={openWebsite}>
               Open

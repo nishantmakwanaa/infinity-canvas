@@ -15,13 +15,12 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
         <ul className="space-y-2 text-xs font-mono">
           <li>
             •{' '}
-            <a href="https://nishantmakwana.tech" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
-              DM me on my portfolio
-            </a>
+            <span className="text-muted-foreground">DM:</span>{' '}
+            <a href="https://x.com/wordsofnishant" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">Twitter/X</a>
           </li>
           <li>
             •{' '}
-            <a href="https://github.com/nishantmakwana/infinity-canvas/issues" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
+            <a href="https://github.com/nishantmakwanaa/infinity-canvas/issues" target="_blank" rel="noopener noreferrer" className="text-foreground underline hover:opacity-70">
               Submit an issue on GitHub
             </a>
           </li>

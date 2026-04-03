@@ -15,9 +15,10 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   const extractUser = useCallback((supaUser: User): AuthUser => {
-    const meta = supaUser.user_metadata || {};
     const email = supaUser.email || '';
-    const username = meta.full_name || meta.name || email.split('@')[0] || 'User';
+    // Canonical, immutable username: email local-part (unique in Supabase).
+    const username = (email.split('@')[0] || 'user').toLowerCase();
+    const meta = supaUser.user_metadata || {};
     const avatarUrl = meta.avatar_url || meta.picture || null;
     return { id: supaUser.id, email, username, avatarUrl };
   }, []);

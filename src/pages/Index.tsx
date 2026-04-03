@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCanvasSync } from '@/hooks/useCanvasSync';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useCanvasStore } from '@/store/canvasStore';
 
 function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
@@ -18,7 +19,7 @@ const Index = () => {
   const { user, session, loading, signInWithGoogle, signOut } = useAuth();
   const navigate = useNavigate();
   const params = useParams<{ username?: string; canvasName?: string }>();
-  const { canvases, currentCanvasId, currentCanvasName, createCanvas, selectCanvas, selectCanvasByName, selectCanvasByRoute } = useCanvasSync(session, user?.username);
+  const { canvases, currentCanvasId, currentCanvasName, createCanvas, selectCanvas, selectCanvasByName, selectCanvasByRoute, deleteCanvases } = useCanvasSync(session, user?.username);
   const [sidebarWidthPercent, setSidebarWidthPercent] = useState(18);
   const initialRouteSyncedRef = useRef(false);
 
@@ -65,6 +66,39 @@ const Index = () => {
     window.addEventListener('mouseup', onUp);
   };
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isTyping = tag === 'input' || tag === 'textarea' || (target as any)?.isContentEditable;
+      if (isTyping) return;
+
+      const key = e.key.toLowerCase();
+      const store = useCanvasStore.getState();
+
+      if (key === 'n') { e.preventDefault(); store.addBlock('note'); return; }
+      if (key === 'l') { e.preventDefault(); store.addBlock('link'); return; }
+      if (key === 't') { e.preventDefault(); store.addBlock('todo'); return; }
+      if (key === 'm') { e.preventDefault(); store.addBlock('media'); return; }
+
+      if (key === 'v') { e.preventDefault(); store.setActiveTool('select'); return; }
+      if (key === 'p') { e.preventDefault(); store.setActiveTool('pencil'); return; }
+      if (key === 'e') { e.preventDefault(); store.setActiveTool('eraser'); return; }
+      if (key === 'x') { e.preventDefault(); store.setActiveTool('text'); return; }
+      if (key === 's') { e.preventDefault(); store.setActiveTool('shape'); return; }
+      if (key === 'a') { e.preventDefault(); store.setActiveTool('arrow'); return; }
+
+      // Use Ctrl + / Ctrl - already handled by browser zoom; keep for canvas zoom too.
+      if (key === '+' || key === '=') { e.preventDefault(); store.setZoom(store.zoom * 1.15); return; }
+      if (key === '-') { e.preventDefault(); store.setZoom(store.zoom / 1.15); return; }
+      if (key === '0') { e.preventDefault(); store.setZoom(1); store.setPan({ x: 0, y: 0 }); return; }
+      if (key === 'r') { e.preventDefault(); store.setPan({ x: 0, y: 0 }); store.setZoom(1); return; }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
     <>
       <InfiniteCanvas />
@@ -83,6 +117,7 @@ const Index = () => {
         currentCanvasId={currentCanvasId}
         onCreateCanvas={() => createCanvas()}
         onSelectCanvas={(id) => selectCanvas(id)}
+        onDeleteCanvases={(ids) => deleteCanvases(ids)}
         widthPercent={sidebarWidthPercent}
         onResizeStart={handleSidebarResizeStart}
       />
