@@ -31,11 +31,12 @@ interface CanvasState {
   selectBlock: (id: string | null) => void;
   setPan: (pan: { x: number; y: number }) => void;
   setZoom: (zoom: number) => void;
+  loadCanvas: (blocks: CanvasBlock[], pan: { x: number; y: number }, zoom: number) => void;
 }
 
 const defaultSizes: Record<BlockType, { width: number; height: number }> = {
   note: { width: 240, height: 160 },
-  link: { width: 260, height: 80 },
+  link: { width: 260, height: 200 },
   todo: { width: 240, height: 200 },
   image: { width: 280, height: 200 },
 };
@@ -58,7 +59,7 @@ export const useCanvasStore = create<CanvasState>((set) => ({
       y: y ?? 200 + Math.random() * 200,
       width: size.width,
       height: size.height,
-      content: type === 'note' ? '' : type === 'link' ? '' : '',
+      content: '',
       url: type === 'link' ? 'https://' : type === 'image' ? '' : undefined,
       todos: type === 'todo' ? [{ id: genId(), text: '', done: false }] : undefined,
     };
@@ -81,4 +82,6 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   setPan: (pan) => set({ pan }),
 
   setZoom: (zoom) => set({ zoom: Math.min(3, Math.max(0.1, zoom)) }),
+
+  loadCanvas: (blocks, pan, zoom) => set({ blocks, pan, zoom, selectedBlockId: null }),
 }));

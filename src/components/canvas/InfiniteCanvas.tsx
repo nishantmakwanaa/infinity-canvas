@@ -2,7 +2,11 @@ import React, { useRef, useCallback, useEffect } from 'react';
 import { useCanvasStore } from '@/store/canvasStore';
 import { CanvasBlockComponent } from './CanvasBlock';
 
-export function InfiniteCanvas() {
+interface Props {
+  readOnly?: boolean;
+}
+
+export function InfiniteCanvas({ readOnly }: Props) {
   const { blocks, pan, zoom, setPan, setZoom, selectBlock } = useCanvasStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
@@ -71,7 +75,7 @@ export function InfiniteCanvas() {
         }}
       >
         {blocks.map((block) => (
-          <CanvasBlockComponent key={block.id} block={block} />
+          <CanvasBlockComponent key={block.id} block={block} readOnly={readOnly} />
         ))}
       </div>
     </div>
