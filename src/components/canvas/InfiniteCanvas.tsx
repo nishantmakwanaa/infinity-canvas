@@ -103,10 +103,6 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     return false;
   };
 
-  const isTouchCapableDevice = () => {
-    return navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-  };
-
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       if (canNativeScrollFromTarget(e.target, e.deltaX, e.deltaY)) {
@@ -114,7 +110,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       }
       e.preventDefault();
       const state = useCanvasStore.getState();
-      const canPinchZoom = isTouchCapableDevice() && (e.ctrlKey || e.metaKey);
+      const canPinchZoom = e.ctrlKey || e.metaKey;
       if (canPinchZoom) {
         const delta = -e.deltaY * 0.002;
         state.setZoom(state.zoom * (1 + delta));
@@ -532,16 +528,6 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
             className="fixed z-[100] w-40 border border-border bg-card p-1 shadow-lg"
             style={{ left: menu.x, top: menu.y }}
           >
-            <button className="w-full px-2 py-1.5 text-left text-xs font-mono hover:bg-accent" onClick={() => { handleSelect(); closeMenu(); }}>
-              Select
-            </button>
-            <button className="w-full px-2 py-1.5 text-left text-xs font-mono hover:bg-accent" onClick={() => { handleSelectAll(); closeMenu(); }}>
-              Select All
-            </button>
-            <button className="w-full px-2 py-1.5 text-left text-xs font-mono hover:bg-accent" onClick={() => { handleResetCanvas(); closeMenu(); }}>
-              Reset Canvas
-            </button>
-            <div className="my-1 h-px bg-border" />
             <button
               className="w-full px-2 py-1.5 text-left text-xs font-mono hover:bg-accent"
               onClick={async () => {
@@ -550,6 +536,16 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
               }}
             >
               Paste
+            </button>
+            <button className="w-full px-2 py-1.5 text-left text-xs font-mono hover:bg-accent" onClick={() => { handleSelect(); closeMenu(); }}>
+              Select
+            </button>
+            <button className="w-full px-2 py-1.5 text-left text-xs font-mono hover:bg-accent" onClick={() => { handleSelectAll(); closeMenu(); }}>
+              Select All
+            </button>
+            <div className="my-1 h-px bg-border" />
+            <button className="w-full px-2 py-1.5 text-left text-xs font-mono hover:bg-accent" onClick={() => { handleResetCanvas(); closeMenu(); }}>
+              Reset Canvas
             </button>
           </div>
         </>

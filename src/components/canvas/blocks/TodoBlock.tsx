@@ -1,11 +1,19 @@
 import { useCanvasStore, CanvasBlock, TodoItem, FONT_MAP } from '@/store/canvasStore';
 import { Plus, Check } from 'lucide-react';
 import { getTodoSize } from '@/lib/blockSizing';
+import type { CSSProperties } from 'react';
 
 export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
   const todos = block.todos || [];
   const textFont = FONT_MAP[block.fontFamily || 'mono'];
+  const textStyle: CSSProperties = {
+    fontFamily: textFont,
+    fontWeight: block.textBold ? 700 : 400,
+    fontStyle: block.textItalic ? 'italic' : 'normal',
+    textDecoration: block.textUnderline ? 'underline' : 'none',
+    backgroundColor: block.textHighlight ? 'rgba(250, 204, 21, 0.28)' : 'transparent',
+  };
 
   const updateTodo = (todoId: string, updates: Partial<TodoItem>) => {
     if (readOnly) return;
@@ -41,7 +49,7 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
   };
 
   return (
-    <div className="p-3 space-y-1.5" style={{ fontFamily: textFont }}>
+    <div className="p-3 space-y-1.5" style={textStyle}>
       {todos.map((todo) => (
         <div key={todo.id} className="flex items-center gap-2.5 group">
           <button
@@ -60,7 +68,7 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
               className={`flex-1 text-sm font-mono ${
                 todo.done ? 'line-through text-muted-foreground' : 'text-foreground'
               }`}
-              style={{ fontFamily: textFont }}
+              style={textStyle}
             >
               {todo.text || 'To do...'}
             </span>
@@ -69,7 +77,7 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
               className={`flex-1 bg-transparent text-sm font-mono focus:outline-none placeholder:text-muted-foreground ${
                 todo.done ? 'line-through text-muted-foreground' : 'text-foreground'
               }`}
-              style={{ fontFamily: textFont }}
+              style={textStyle}
               placeholder="To do..."
               value={todo.text}
               onChange={(e) => updateTodo(todo.id, { text: e.target.value })}

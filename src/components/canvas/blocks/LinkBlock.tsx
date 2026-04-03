@@ -1,6 +1,7 @@
 import { useCanvasStore, CanvasBlock, FONT_MAP } from '@/store/canvasStore';
 import { ExternalLink, Globe } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
+import type { CSSProperties } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
@@ -78,6 +79,13 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
   const lastFetchedUrl = useRef('');
   const lastAutoSizeUrl = useRef('');
   const textFont = FONT_MAP[block.fontFamily || 'mono'];
+  const textStyle: CSSProperties = {
+    fontFamily: textFont,
+    fontWeight: block.textBold ? 700 : 400,
+    fontStyle: block.textItalic ? 'italic' : 'normal',
+    textDecoration: block.textUnderline ? 'underline' : 'none',
+    backgroundColor: block.textHighlight ? 'rgba(250, 204, 21, 0.28)' : 'transparent',
+  };
 
   useEffect(() => {
     if (readOnly) return;
@@ -136,10 +144,10 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
 
   if (readOnly) {
     return (
-      <div className="p-3 h-full flex flex-col gap-2" style={{ fontFamily: textFont }}>
+      <div className="p-3 h-full flex flex-col gap-2" style={textStyle}>
         <div className="flex items-center gap-2">
           {domain && <img src={getFaviconUrl(normalizedUrl)} alt="" className="w-4 h-4" />}
-          <span className="text-sm font-mono text-foreground truncate" style={{ fontFamily: textFont }}>{block.content || domain || 'Link'}</span>
+          <span className="text-sm font-mono text-foreground truncate" style={textStyle}>{block.content || domain || 'Link'}</span>
         </div>
         {normalizedUrl && domain && (
           <div
@@ -160,11 +168,11 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
   }
 
   return (
-    <div className="p-3 h-full flex flex-col gap-2" style={{ fontFamily: textFont }}>
+    <div className="p-3 h-full flex flex-col gap-2" style={textStyle}>
       <div className="flex items-center gap-2">
         <input
           className="flex-1 bg-transparent text-xs font-mono text-muted-foreground focus:outline-none placeholder:text-muted-foreground border-b border-border pb-1"
-          style={{ fontFamily: textFont }}
+          style={textStyle}
           placeholder="Paste URL..."
           value={block.url || ''}
           ref={inputRef}
@@ -182,7 +190,7 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
       </div>
       {fetchingTitle && <span className="text-[10px] font-mono text-muted-foreground">Fetching title...</span>}
       {block.content && (
-        <span className="text-sm font-mono text-foreground truncate" style={{ fontFamily: textFont }}>{block.content}</span>
+        <span className="text-sm font-mono text-foreground truncate" style={textStyle}>{block.content}</span>
       )}
       {normalizedUrl && domain && (
         <div
@@ -218,7 +226,7 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
           <div className="space-y-2">
             <input
               className="w-full h-8 px-2 bg-transparent text-xs font-mono border border-border focus:outline-none"
-              style={{ fontFamily: textFont }}
+              style={textStyle}
               value={block.url || ''}
               onChange={(e) => updateBlock(block.id, { url: e.target.value, content: '' })}
             />

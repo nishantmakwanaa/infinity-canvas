@@ -2,17 +2,33 @@ import { X } from 'lucide-react';
 
 const SHORTCUTS = [
   { section: 'Tools', items: [
-    ['Note', 'Alt/Ctrl + N'], ['Link', 'Alt/Ctrl + L'], ['Todo', 'Alt/Ctrl + T'], ['Media', 'Alt/Ctrl + M'],
-    ['Pencil', 'Alt/Ctrl + P'], ['Eraser', 'Alt/Ctrl + E'], ['Text', 'Alt/Ctrl + X'], ['Shape', 'Alt/Ctrl + S'],
-    ['Line', 'Alt/Ctrl + I'], ['Arrow', 'Alt/Ctrl + A'], ['Select', 'Alt/Ctrl + V'],
-  ]},
-  { section: 'View', items: [
-    ['Zoom in', 'Alt/Ctrl + ='], ['Zoom out', 'Alt/Ctrl + -'], ['Zoom to 100%', 'Alt/Ctrl + 0'],
-    ['Reset view', 'Alt/Ctrl + R'],
+    ['Cursor / Select', 'Alt + Shift + V'],
+    ['Draw (Pencil)', 'Alt + Shift + P'],
+    ['Eraser', 'Alt + Shift + E'],
+    ['Note', 'Alt + Shift + N'],
+    ['Link', 'Alt + Shift + L'],
+    ['Todo', 'Alt + Shift + T'],
+    ['Media', 'Alt + Shift + M'],
+    ['Text', 'Alt + Shift + Q'],
+    ['Shape', 'Alt + Shift + S'],
+    ['Line', 'Alt + Shift + O'],
+    ['Arrow', 'Alt + Shift + A'],
   ]},
   { section: 'Edit', items: [
-    ['Copy selected block', 'Alt/Ctrl + C'],
-    ['Delete', 'Delete'],
+    ['Undo', 'Alt + Shift + Z'],
+    ['Redo', 'Alt + Shift + Y'],
+    ['Delete selected', 'Alt + Shift + Delete'],
+    ['Copy selected', 'Alt + Shift + C'],
+    ['Cut selected', 'Alt + Shift + K'],
+  ]},
+  { section: 'Theme & Text', items: [
+    ['Theme light', 'Alt + Shift + 1'],
+    ['Theme dark', 'Alt + Shift + 2'],
+    ['Theme auto', 'Alt + Shift + 3'],
+    ['Bold', 'Alt + Shift + B'],
+    ['Italic', 'Alt + Shift + I'],
+    ['Underline', 'Alt + Shift + U'],
+    ['Highlight', 'Alt + Shift + H'],
   ]},
 ];
 

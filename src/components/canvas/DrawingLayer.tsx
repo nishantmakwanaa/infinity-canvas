@@ -63,7 +63,14 @@ function shapePath(type: string, x: number, y: number, w: number, h: number): st
 }
 
 function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement; onDelete?: (id: string) => void }) {
-  const common = { onClick: onDelete ? () => onDelete(element.id) : undefined };
+  const common = onDelete
+    ? {
+        onPointerDown: (event: React.PointerEvent<SVGElement>) => {
+          event.stopPropagation();
+          onDelete(element.id);
+        },
+      }
+    : {};
 
   switch (element.type) {
     case 'freehand':
@@ -81,7 +88,31 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
     case 'heart':
       return <path d={shapePath(element.type, element.x, element.y, Math.abs(element.w), Math.abs(element.h))} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
     case 'text':
-      return <text x={element.x} y={element.y} fill={element.color} fontSize={element.fontSize} fontFamily={element.fontFamily} {...common} style={onDelete ? { cursor: 'pointer' } : {}}>{element.content}</text>;
+      return (
+        <g {...common} style={onDelete ? { cursor: 'pointer' } : {}}>
+          {element.highlight && (
+            <rect
+              x={element.x - 2}
+              y={element.y - element.fontSize}
+              width={Math.max(24, element.content.length * element.fontSize * 0.62)}
+              height={element.fontSize * 1.25}
+              fill="rgba(250, 204, 21, 0.28)"
+            />
+          )}
+          <text
+            x={element.x}
+            y={element.y}
+            fill={element.color}
+            fontSize={element.fontSize}
+            fontFamily={element.fontFamily}
+            fontWeight={element.bold ? 700 : 400}
+            fontStyle={element.italic ? 'italic' : 'normal'}
+            textDecoration={element.underline ? 'underline' : 'none'}
+          >
+            {element.content}
+          </text>
+        </g>
+      );
     case 'line':
       return <line x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
     case 'arrow': {
@@ -110,6 +141,11 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
   const [textPos, setTextPos] = useState<{ x: number; y: number } | null>(null);
   const [textValue, setTextValue] = useState('');
   const isDrawing = useRef(false);
+  const pathRef = useRef<{ x: number; y: number }[]>([]);
+  const drawStartRef = useRef<{ x: number; y: number } | null>(null);
+  const drawEndRef = useRef<{ x: number; y: number } | null>(null);
+  const drawToolRef = useRef<string | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const layerRef = useRef<SVGSVGElement>(null);
 
@@ -133,9 +169,17 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
     if (!isActive) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const pos = toCanvasFromClient(e.clientX, e.clientY);
+    activePointerIdRef.current = e.pointerId;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture may fail on unsupported environments.
+    }
 
     if (activeTool === 'pencil') {
+      drawToolRef.current = activeTool;
       isDrawing.current = true;
+      pathRef.current = [pos];
       setCurrentPath([pos]);
     } else if (activeTool === 'eraser') {
       // handled via element click
@@ -144,56 +188,99 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
       setTextValue('');
       setTimeout(() => inputRef.current?.focus(), 50);
     } else if (activeTool === 'shape' || activeTool === 'line' || activeTool === 'arrow') {
+      drawToolRef.current = activeTool;
       isDrawing.current = true;
+      drawStartRef.current = pos;
+      drawEndRef.current = pos;
       setDrawStart(pos);
       setDrawEnd(pos);
     }
-    if (activeTool !== 'eraser') {
-      e.preventDefault();
-    }
+    e.stopPropagation();
+    e.preventDefault();
   };
 
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!isActive || !isDrawing.current) return;
+    if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
     const pos = toCanvasFromClient(e.clientX, e.clientY);
-    if (activeTool === 'pencil') {
-      setCurrentPath(p => [...p, pos]);
-    } else if (activeTool === 'shape' || activeTool === 'line' || activeTool === 'arrow') {
+    if (drawToolRef.current === 'pencil') {
+      pathRef.current.push(pos);
+      setCurrentPath([...pathRef.current]);
+    } else if (drawToolRef.current === 'shape' || drawToolRef.current === 'line' || drawToolRef.current === 'arrow') {
+      drawEndRef.current = pos;
       setDrawEnd(pos);
     }
+    e.stopPropagation();
     e.preventDefault();
   };
 
-  const handlePointerUp = () => {
-    if (!isActive || !isDrawing.current) return;
+  const handlePointerUp = (e?: React.PointerEvent<SVGSVGElement>) => {
+    if (!isDrawing.current) return;
+    if (activePointerIdRef.current !== null && e && e.pointerId !== activePointerIdRef.current) return;
     isDrawing.current = false;
+    if (activePointerIdRef.current !== null && e) {
+      try {
+        e.currentTarget.releasePointerCapture(activePointerIdRef.current);
+      } catch {
+        // Ignore if capture already released.
+      }
+    }
+    activePointerIdRef.current = null;
 
-    if (activeTool === 'pencil' && currentPath.length > 1) {
-      addDrawingElement({ id: genId(), type: 'freehand', points: currentPath, color: toolSettings.color, strokeWidth: strokeW });
+    const path = pathRef.current;
+    const start = drawStartRef.current;
+    const end = drawEndRef.current;
+    const drawTool = drawToolRef.current;
+
+    if (drawTool === 'pencil' && path.length > 1) {
+      addDrawingElement({ id: genId(), type: 'freehand', points: path, color: toolSettings.color, strokeWidth: strokeW });
+      pathRef.current = [];
       setCurrentPath([]);
-    } else if (activeTool === 'shape' && drawStart && drawEnd) {
-      const x = Math.min(drawStart.x, drawEnd.x);
-      const y = Math.min(drawStart.y, drawEnd.y);
-      const w = Math.abs(drawEnd.x - drawStart.x);
-      const h = Math.abs(drawEnd.y - drawStart.y);
+    } else if (drawTool === 'shape' && start && end) {
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const w = Math.abs(end.x - start.x);
+      const h = Math.abs(end.y - start.y);
       if (w > 2 || h > 2) {
         addDrawingElement({ id: genId(), type: toolSettings.shapeType, x, y, w, h, color: toolSettings.color, strokeWidth: strokeW });
       }
+      drawStartRef.current = null;
+      drawEndRef.current = null;
       setDrawStart(null);
       setDrawEnd(null);
-    } else if ((activeTool === 'line' || activeTool === 'arrow') && drawStart && drawEnd) {
-      const dist = Math.hypot(drawEnd.x - drawStart.x, drawEnd.y - drawStart.y);
+    } else if ((drawTool === 'line' || drawTool === 'arrow') && start && end) {
+      const dist = Math.hypot(end.x - start.x, end.y - start.y);
       if (dist > 2) {
-        addDrawingElement({ id: genId(), type: activeTool, x1: drawStart.x, y1: drawStart.y, x2: drawEnd.x, y2: drawEnd.y, color: toolSettings.color, strokeWidth: strokeW });
+        addDrawingElement({ id: genId(), type: drawTool, x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: toolSettings.color, strokeWidth: strokeW });
       }
+      drawStartRef.current = null;
+      drawEndRef.current = null;
       setDrawStart(null);
       setDrawEnd(null);
+    }
+    drawToolRef.current = null;
+
+    if (e) {
+      e.stopPropagation();
     }
   };
 
   const handleTextSubmit = () => {
     if (textPos && textValue.trim()) {
-      addDrawingElement({ id: genId(), type: 'text', x: textPos.x, y: textPos.y, content: textValue.trim(), color: toolSettings.color, fontSize, fontFamily });
+      addDrawingElement({
+        id: genId(),
+        type: 'text',
+        x: textPos.x,
+        y: textPos.y,
+        content: textValue.trim(),
+        color: toolSettings.color,
+        fontSize,
+        fontFamily,
+        bold: toolSettings.textBold,
+        italic: toolSettings.textItalic,
+        underline: toolSettings.textUnderline,
+        highlight: toolSettings.textHighlight,
+      });
     }
     setTextPos(null);
     setTextValue('');

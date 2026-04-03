@@ -2,7 +2,8 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useCanvasStore, CanvasBlock, DrawingElement } from '@/store/canvasStore';
 import type { Session } from '@supabase/supabase-js';
-import { createDefaultCanvasRouteName } from '@/lib/canvasNaming';
+import { createDefaultCanvasRouteName, parseCanvasRouteName, toCanvasRouteName } from '@/lib/canvasNaming';
+import { toast } from 'sonner';
 
 export interface CanvasMeta {
   id: string;
@@ -88,6 +89,9 @@ export function useCanvasSync(session: Session | null) {
   const canvasIdRef = useRef<string | null>(null);
   const currentCanvasIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const guestSaveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const lastSavedSignatureRef = useRef('');
+  const lastGuestSignatureRef = useRef('');
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
@@ -346,43 +350,155 @@ export function useCanvasSync(session: Session | null) {
     isLoadingRef.current = false;
   }, [createCanvas, loadCanvasById, refreshCanvases, session?.user?.id]);
 
+  const getAdaptiveSaveDelayMs = () => {
+    const connection = (navigator as any)?.connection;
+    if (connection?.saveData) return 2600;
+    const effectiveType = String(connection?.effectiveType || '').toLowerCase();
+    if (effectiveType.includes('2g')) return 2400;
+    if (effectiveType.includes('3g')) return 1800;
+    return 1000;
+  };
+
+  const renameCanvas = useCallback(async (nextCanvasName: string) => {
+    if (!session?.user?.id || !currentCanvasIdRef.current || !currentCanvasName) return false;
+
+    const currentParsed = parseCanvasRouteName(currentCanvasName);
+    const nextCanvasSlug = parseCanvasRouteName(`${nextCanvasName}/${currentParsed.pageSlug}`).canvasSlug;
+    if (nextCanvasSlug === currentParsed.canvasSlug) return true;
+
+    const { data: allRows } = await supabase
+      .from('canvases')
+      .select('id,name')
+      .eq('user_id', session.user.id);
+
+    const all = (allRows || []) as { id: string; name: string }[];
+    const targetRows = all.filter((row) => parseCanvasRouteName(row.name).canvasSlug === currentParsed.canvasSlug);
+    if (!targetRows.length) return false;
+
+    const updates = targetRows.map((row) => {
+      const parsed = parseCanvasRouteName(row.name);
+      return { id: row.id, name: toCanvasRouteName(nextCanvasSlug, parsed.pageSlug) };
+    });
+
+    const targetIds = new Set(updates.map((row) => row.id));
+    const targetNames = new Set(updates.map((row) => row.name));
+    const conflict = all.some((row) => !targetIds.has(row.id) && targetNames.has(row.name));
+    if (conflict) {
+      toast.error('Canvas rename conflicts with existing page names');
+      return false;
+    }
+
+    for (const row of updates) {
+      const { error } = await supabase
+        .from('canvases')
+        .update({ name: row.name })
+        .eq('id', row.id);
+      if (error) {
+        toast.error('Failed to rename canvas');
+        return false;
+      }
+    }
+
+    const currentRenamed = updates.find((row) => row.id === currentCanvasIdRef.current);
+    if (currentRenamed) {
+      setCurrentCanvasName(currentRenamed.name);
+    }
+    await refreshCanvases(session.user.id);
+    toast.success('Canvas renamed');
+    return true;
+  }, [currentCanvasName, refreshCanvases, session?.user?.id]);
+
+  const renamePage = useCallback(async (nextPageName: string) => {
+    if (!session?.user?.id || !currentCanvasIdRef.current || !currentCanvasName) return false;
+
+    const currentParsed = parseCanvasRouteName(currentCanvasName);
+    const nextName = toCanvasRouteName(currentParsed.canvasSlug, nextPageName);
+    if (nextName === currentCanvasName) return true;
+
+    const { data: conflictRow } = await supabase
+      .from('canvases')
+      .select('id')
+      .eq('user_id', session.user.id)
+      .eq('name', nextName)
+      .neq('id', currentCanvasIdRef.current)
+      .maybeSingle();
+
+    if (conflictRow?.id) {
+      toast.error('Page name already exists in this canvas');
+      return false;
+    }
+
+    const { error } = await supabase
+      .from('canvases')
+      .update({ name: nextName })
+      .eq('id', currentCanvasIdRef.current);
+
+    if (error) {
+      toast.error('Failed to rename page');
+      return false;
+    }
+
+    setCurrentCanvasName(nextName);
+    await refreshCanvases(session.user.id);
+    toast.success('Page renamed');
+    return true;
+  }, [currentCanvasName, refreshCanvases, session?.user?.id]);
+
   const saveCanvas = useCallback(() => {
     if (!session?.user?.id || !canvasIdRef.current || isLoadingRef.current) return;
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    const delayMs = getAdaptiveSaveDelayMs();
+
     saveTimeoutRef.current = setTimeout(async () => {
       const { blocks, pan, zoom, drawingElements } = useCanvasStore.getState();
+      const blocksPayload = JSON.parse(JSON.stringify(blocks));
+      const drawingsPayload = JSON.parse(JSON.stringify(drawingElements));
+      const signature = JSON.stringify([blocksPayload, drawingsPayload, pan.x, pan.y, zoom]);
+      if (signature === lastSavedSignatureRef.current) {
+        return;
+      }
+
       const { error } = await supabase
         .from('canvases')
         .update({
-          blocks: JSON.parse(JSON.stringify(blocks)),
-          drawings: JSON.parse(JSON.stringify(drawingElements)),
+          blocks: blocksPayload,
+          drawings: drawingsPayload,
           pan_x: pan.x,
           pan_y: pan.y,
           zoom,
         } as any)
         .eq('id', canvasIdRef.current!);
       if (!error) {
+        lastSavedSignatureRef.current = signature;
         setCanvases((prev) => {
           const now = new Date().toISOString();
           return prev.map((c) => (c.id === canvasIdRef.current ? { ...c, updated_at: now } : c));
         });
       }
-    }, 1000);
+    }, delayMs);
   }, [session]);
 
   const saveGuestCanvas = useCallback(() => {
     if (session?.user?.id || isLoadingRef.current) return;
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = setTimeout(() => {
+    if (guestSaveTimeoutRef.current) clearTimeout(guestSaveTimeoutRef.current);
+    guestSaveTimeoutRef.current = setTimeout(() => {
       const { blocks, pan, zoom, drawingElements } = useCanvasStore.getState();
+      const blocksPayload = JSON.parse(JSON.stringify(blocks));
+      const drawingsPayload = JSON.parse(JSON.stringify(drawingElements));
+      const signature = JSON.stringify([blocksPayload, drawingsPayload, pan.x, pan.y, zoom]);
+      if (signature === lastGuestSignatureRef.current) {
+        return;
+      }
+
       writeGuestSnapshot({
-        blocks: JSON.parse(JSON.stringify(blocks)),
-        drawings: JSON.parse(JSON.stringify(drawingElements)),
+        blocks: blocksPayload,
+        drawings: drawingsPayload,
         pan,
         zoom,
       });
-    }, 400);
+      lastGuestSignatureRef.current = signature;
+    }, 700);
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -425,6 +541,13 @@ export function useCanvasSync(session: Session | null) {
     return () => unsub();
   }, [session?.user?.id, saveGuestCanvas]);
 
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (guestSaveTimeoutRef.current) clearTimeout(guestSaveTimeoutRef.current);
+    };
+  }, []);
+
   return {
     canvasId: canvasIdRef.current,
     currentCanvasId,
@@ -435,6 +558,8 @@ export function useCanvasSync(session: Session | null) {
     selectCanvasByRoute,
     createCanvas,
     deleteCanvases,
+    renameCanvas,
+    renamePage,
     isCanvasLoading,
   };
 }

@@ -6,6 +6,7 @@ interface AuthUser {
   id: string;
   email: string;
   username: string;
+  displayName: string;
   avatarUrl: string | null;
 }
 
@@ -19,8 +20,12 @@ export function useAuth() {
     // Canonical, immutable username: email local-part (unique in Supabase).
     const username = (email.split('@')[0] || 'user').toLowerCase();
     const meta = supaUser.user_metadata || {};
+    const firstName = String(meta.given_name || '').trim();
+    const lastName = String(meta.family_name || '').trim();
+    const fullName = String(meta.full_name || meta.name || '').trim();
+    const displayName = `${firstName} ${lastName}`.trim() || fullName || username;
     const avatarUrl = meta.avatar_url || meta.picture || null;
-    return { id: supaUser.id, email, username, avatarUrl };
+    return { id: supaUser.id, email, username, displayName, avatarUrl };
   }, []);
 
   useEffect(() => {

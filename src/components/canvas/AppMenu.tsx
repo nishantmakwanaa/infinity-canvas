@@ -1,21 +1,17 @@
 import { useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Download, Globe, Keyboard, BookOpen, MessageSquare, ChevronRight, Sun, Moon, Monitor, Puzzle } from 'lucide-react';
+import { Download, Globe, Keyboard, ChevronRight, Sun, Moon, Monitor, Puzzle } from 'lucide-react';
 import { getThemePreference, setThemePreference, type ThemePreference } from '@/hooks/useThemeTime';
 import { exportCanvasAsCnvs, exportCanvasAsPng, exportCanvasAsSvg, importCanvasFromCnvsFile } from '@/lib/export';
 import { APP_LANGUAGES, getAppLanguage, setAppLanguage } from '@/lib/i18n';
 
 interface AppMenuProps {
   onClose: () => void;
-  isLoggedIn?: boolean;
   isMobile?: boolean;
   onOpenShortcuts: () => void;
-  onOpenFeedback: () => void;
   onOpenExtension: () => void;
 }
 
-export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts, onOpenFeedback, onOpenExtension }: AppMenuProps) {
-  const navigate = useNavigate();
+export function AppMenu({ onClose, isMobile = false, onOpenShortcuts, onOpenExtension }: AppMenuProps) {
   const [showExport, setShowExport] = useState(false);
   const [showLanguage, setShowLanguage] = useState(false);
   const [languageQuery, setLanguageQuery] = useState('');
@@ -54,29 +50,43 @@ export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts
   return (
     <>
       <div className="absolute left-0 top-9 z-50 w-52 border border-border bg-card py-1 shadow-lg">
-        {/* Export (logged-in only) */}
-        {isLoggedIn && (
-          <div
-            className="relative"
-            onMouseEnter={() => { if (!isMobile) setShowExport(true); }}
-            onMouseLeave={() => { if (!isMobile) setShowExport(false); }}
+        <div
+          className="relative"
+          onMouseEnter={() => { if (!isMobile) setShowExport(true); }}
+          onMouseLeave={() => { if (!isMobile) setShowExport(false); }}
+        >
+          <button
+            onClick={() => setShowExport((prev) => !prev)}
+            className="w-full flex items-center justify-between px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
           >
-            <button
-              onClick={() => setShowExport((prev) => !prev)}
-              className="w-full flex items-center justify-between px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
-            >
-              <span className="flex items-center gap-2"><Download size={12} /> Export</span>
-              <ChevronRight size={10} />
-            </button>
-            {showExport && (
-              <div className={`absolute top-0 z-[60] w-32 border border-border bg-card py-1 ${flyoutSideClass}`}>
-                <button onClick={() => { exportCanvasAsPng(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
-                <button onClick={() => { exportCanvasAsSvg(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
-                <button onClick={() => { exportCanvasAsCnvs(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
-              </div>
-            )}
-          </div>
-        )}
+            <span className="flex items-center gap-2"><Download size={12} /> Export</span>
+            <ChevronRight size={10} />
+          </button>
+          {showExport && (
+            <div className={`absolute top-0 z-[60] w-32 border border-border bg-card py-1 ${flyoutSideClass}`}>
+              <button onClick={() => { exportCanvasAsPng(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
+              <button onClick={() => { exportCanvasAsSvg(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
+              <button onClick={() => { exportCanvasAsCnvs(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => importInputRef.current?.click()}
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+        >
+          <Download size={12} /> Load .cnvs file
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".cnvs,application/json"
+          className="hidden"
+          onChange={(e) => {
+            void handleImportCnvs(e.target.files?.[0]);
+            e.currentTarget.value = '';
+          }}
+        />
 
         <button
           onClick={cycleTheme}
@@ -142,36 +152,11 @@ export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts
           }}
           className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
         >
-          <Puzzle size={12} /> Add extension
+          <Puzzle size={12} /> Add to browser
         </button>
-
-        <button
-          onClick={() => importInputRef.current?.click()}
-          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
-        >
-          <Download size={12} /> Load .cnvs file
-        </button>
-        <input
-          ref={importInputRef}
-          type="file"
-          accept=".cnvs,application/json"
-          className="hidden"
-          onChange={(e) => {
-            void handleImportCnvs(e.target.files?.[0]);
-            e.currentTarget.value = '';
-          }}
-        />
 
         <button onClick={() => { onClose(); onOpenShortcuts(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors">
           <Keyboard size={12} /> Keyboard shortcuts...
-        </button>
-
-        <button onClick={() => { onClose(); navigate('/manual'); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors">
-          <BookOpen size={12} /> User manual
-        </button>
-
-        <button onClick={() => { onClose(); onOpenFeedback(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors">
-          <MessageSquare size={12} /> Send feedback
         </button>
       </div>
     </>

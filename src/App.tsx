@@ -4,11 +4,19 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Index from "./pages/Index";
 import SharedCanvas from "./pages/SharedCanvas";
-import Manual from "./pages/Manual";
 import NotFound from "./pages/NotFound";
 import { useRealtimeTranslation } from "@/hooks/useRealtimeTranslation";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 60 * 1000,
+      gcTime: 5 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 const App = () => {
   useRealtimeTranslation();
@@ -27,7 +35,6 @@ const App = () => {
             <Route path="/view/:token" element={<SharedCanvas />} />
             <Route path="/:username/view/:canvasName/:pageName" element={<SharedCanvas />} />
             <Route path="/:username/view/:canvasName" element={<SharedCanvas />} />
-            <Route path="/manual" element={<Manual />} />
             <Route path="/:username/:canvasName/:pageName" element={<Index />} />
             <Route path="/:username?/:canvasName?" element={<Index />} />
             <Route path="*" element={<NotFound />} />

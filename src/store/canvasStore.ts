@@ -22,12 +22,16 @@ export interface CanvasBlock {
   todos?: TodoItem[];
   backgroundColor?: string;
   fontFamily?: FontOption;
+  textBold?: boolean;
+  textItalic?: boolean;
+  textUnderline?: boolean;
+  textHighlight?: boolean;
 }
 
 export type DrawingElement =
   | { id: string; type: 'freehand'; points: { x: number; y: number }[]; color: string; strokeWidth: number }
   | { id: string; type: 'rectangle' | 'ellipse' | 'triangle' | 'hexagon' | 'oval' | 'diamond' | 'star' | 'cloud' | 'heart'; x: number; y: number; w: number; h: number; color: string; strokeWidth: number }
-  | { id: string; type: 'text'; x: number; y: number; content: string; color: string; fontSize: number; fontFamily: string }
+  | { id: string; type: 'text'; x: number; y: number; content: string; color: string; fontSize: number; fontFamily: string; bold?: boolean; italic?: boolean; underline?: boolean; highlight?: boolean }
   | { id: string; type: 'line' | 'arrow'; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number };
 
 export type SizeOption = 'S' | 'M' | 'L' | 'XL';
@@ -39,6 +43,10 @@ export interface ToolSettings {
   size: SizeOption;
   fontFamily: FontOption;
   shapeType: ShapeOption;
+  textBold: boolean;
+  textItalic: boolean;
+  textUnderline: boolean;
+  textHighlight: boolean;
 }
 
 export const COLORS = [
@@ -110,6 +118,10 @@ export const useCanvasStore = create<CanvasState>((set) => ({
     size: 'M',
     fontFamily: 'default',
     shapeType: 'rectangle',
+    textBold: false,
+    textItalic: false,
+    textUnderline: false,
+    textHighlight: false,
   },
 
   addBlock: (type, x, y) => {

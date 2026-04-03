@@ -1,11 +1,10 @@
-import { LogOut, User as UserIcon, Download, MoreVertical, PanelLeftClose, PanelLeftOpen, Share2 } from 'lucide-react';
+import { LogOut, User as UserIcon, Download, MoreVertical, PanelLeftClose, PanelLeftOpen, Share2, ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { exportCanvasAsCnvs, exportCanvasAsPng, exportCanvasAsSvg } from '@/lib/export';
 import { AppMenu } from './AppMenu';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
-import { FeedbackDialog } from './FeedbackDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { parseCanvasRouteName } from '@/lib/canvasNaming';
@@ -14,6 +13,7 @@ interface AuthUser {
   id: string;
   email: string;
   username: string;
+  displayName: string;
   avatarUrl: string | null;
 }
 
@@ -33,6 +33,8 @@ interface AppHeaderProps {
   pageItems?: { id: string; label: string }[];
   onSelectPage?: (canvasId: string) => void;
   onCreatePage?: () => void;
+  onRenameCanvas?: (nextName: string) => Promise<boolean>;
+  onRenamePage?: (nextName: string) => Promise<boolean>;
 }
 
 function slugifyUsername(value: string) {
@@ -55,15 +57,22 @@ export function AppHeader({
   pageItems = [],
   onSelectPage,
   onCreatePage,
+  onRenameCanvas,
+  onRenamePage,
 }: AppHeaderProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
-  const [showFeedbackDialog, setShowFeedbackDialog] = useState(false);
   const [showQrDialog, setShowQrDialog] = useState(false);
   const [showPageMenu, setShowPageMenu] = useState(false);
+  const [editingCanvasName, setEditingCanvasName] = useState(false);
+  const [editingPageName, setEditingPageName] = useState(false);
+  const [canvasNameDraft, setCanvasNameDraft] = useState('');
+  const [pageNameDraft, setPageNameDraft] = useState('');
+  const [renamingCanvas, setRenamingCanvas] = useState(false);
+  const [renamingPage, setRenamingPage] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
   const isMobile = useIsMobile();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -144,6 +153,39 @@ export function AppHeader({
     setShowQrDialog(true);
   };
 
+  const startCanvasRename = () => {
+    if (!onRenameCanvas || renamingCanvas) return;
+    setCanvasNameDraft(headerCanvasName);
+    setEditingCanvasName(true);
+  };
+
+  const submitCanvasRename = async () => {
+    if (!onRenameCanvas) return;
+    const next = canvasNameDraft.trim();
+    setEditingCanvasName(false);
+    if (!next || next === headerCanvasName) return;
+    setRenamingCanvas(true);
+    await onRenameCanvas(next);
+    setRenamingCanvas(false);
+  };
+
+  const startPageRename = () => {
+    if (!onRenamePage || renamingPage) return;
+    setPageNameDraft(headerPageName);
+    setEditingPageName(true);
+    setShowPageMenu(false);
+  };
+
+  const submitPageRename = async () => {
+    if (!onRenamePage) return;
+    const next = pageNameDraft.trim();
+    setEditingPageName(false);
+    if (!next || next === headerPageName) return;
+    setRenamingPage(true);
+    await onRenamePage(next);
+    setRenamingPage(false);
+  };
+
   useEffect(() => {
     if (!showMenu) return;
 
@@ -175,17 +217,72 @@ export function AppHeader({
               {isSidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
             </button>
           )}
-          <span className="max-w-[40vw] truncate text-sm font-semibold tracking-tight text-foreground font-mono">
-            {headerCanvasName}
-          </span>
-          <div className="relative">
+          {editingCanvasName ? (
+            <input
+              autoFocus
+              className="h-8 px-2 border border-border bg-card text-sm font-mono text-foreground min-w-[140px] max-w-[40vw]"
+              value={canvasNameDraft}
+              onChange={(e) => setCanvasNameDraft(e.target.value)}
+              onBlur={() => { void submitCanvasRename(); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void submitCanvasRename();
+                }
+                if (e.key === 'Escape') {
+                  setEditingCanvasName(false);
+                  setCanvasNameDraft(headerCanvasName);
+                }
+              }}
+            />
+          ) : (
             <button
-              className="h-7 px-2 border border-border bg-card text-[11px] font-mono hover:bg-accent"
-              onClick={() => setShowPageMenu((prev) => !prev)}
-              title="Select page"
+              className="max-w-[40vw] truncate text-sm font-semibold tracking-tight text-foreground font-mono hover:text-primary disabled:opacity-60"
+              onClick={startCanvasRename}
+              disabled={!onRenameCanvas || renamingCanvas}
+              title="Rename canvas"
             >
-              / {headerPageName.toLowerCase()}
+              {headerCanvasName}
             </button>
+          )}
+          <div className="relative">
+            <div className="flex items-center">
+              {editingPageName ? (
+                <input
+                  autoFocus
+                  className="h-7 px-2 border border-border bg-card text-[11px] font-mono text-foreground min-w-[110px]"
+                  value={pageNameDraft}
+                  onChange={(e) => setPageNameDraft(e.target.value)}
+                  onBlur={() => { void submitPageRename(); }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void submitPageRename();
+                    }
+                    if (e.key === 'Escape') {
+                      setEditingPageName(false);
+                      setPageNameDraft(headerPageName);
+                    }
+                  }}
+                />
+              ) : (
+                <button
+                  className="h-7 px-2 border border-border bg-card text-[11px] font-mono hover:bg-accent disabled:opacity-60"
+                  onClick={startPageRename}
+                  disabled={!onRenamePage || renamingPage}
+                  title="Rename page"
+                >
+                  / {headerPageName}
+                </button>
+              )}
+              <button
+                className="h-7 w-7 border border-l-0 border-border bg-card inline-flex items-center justify-center hover:bg-accent"
+                onClick={() => setShowPageMenu((prev) => !prev)}
+                title="Select page"
+              >
+                <ChevronDown size={12} />
+              </button>
+            </div>
             {showPageMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowPageMenu(false)} />
@@ -225,10 +322,8 @@ export function AppHeader({
                 <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
                 <AppMenu
                   onClose={() => setShowMenu(false)}
-                  isLoggedIn={Boolean(user)}
                   isMobile={isMobile}
                   onOpenShortcuts={() => setShowShortcutsDialog(true)}
-                  onOpenFeedback={() => setShowFeedbackDialog(true)}
                   onOpenExtension={() => toast.info('Browser extension coming soon!')}
                 />
               </>
@@ -273,7 +368,7 @@ export function AppHeader({
                 <div className="absolute right-0 top-11 z-50 w-56 border border-border bg-card p-3 space-y-3">
                   <div className="flex items-center gap-2">
                     {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="w-8 h-8 object-cover" /> : <div className="w-8 h-8 bg-muted flex items-center justify-center"><UserIcon size={14} /></div>}
-                    <span className="text-xs font-mono text-foreground truncate">{user.username}</span>
+                    <span className="text-xs font-mono text-foreground truncate">{user.displayName}</span>
                   </div>
                   <button onClick={() => { setShowProfile(false); onSignOut(); }} className="flex items-center gap-2 w-full text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
                     <LogOut size={12} /> Sign out
@@ -287,7 +382,6 @@ export function AppHeader({
       </header>
 
       {showShortcutsDialog && <KeyboardShortcutsDialog onClose={() => setShowShortcutsDialog(false)} />}
-      {showFeedbackDialog && <FeedbackDialog onClose={() => setShowFeedbackDialog(false)} />}
       <Dialog open={showQrDialog} onOpenChange={setShowQrDialog}>
         <DialogContent className="max-w-sm" data-no-translate="true">
           <DialogHeader>

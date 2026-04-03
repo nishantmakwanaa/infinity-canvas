@@ -1,8 +1,10 @@
 import { useCanvasStore, COLORS, FONT_MAP } from '@/store/canvasStore';
+import { X } from 'lucide-react';
 
 const DRAWING_TOOLS_WITH_SETTINGS = ['pencil', 'shape', 'line', 'arrow', 'text'];
 const BLOCK_TYPES_WITH_STYLES = ['note', 'link', 'todo', 'media'];
 const BLOCK_TYPES_WITH_FONTS = ['note', 'link', 'todo'];
+const BLOCK_TYPES_WITH_TEXT_FORMATS = ['note', 'link', 'todo'];
 const SIZES = ['S', 'M', 'L', 'XL'] as const;
 const FONTS = ['default', 'sans', 'serif', 'mono'] as const;
 const SHAPES = [
@@ -43,7 +45,13 @@ function ShapeIcon({ id }: { id: string }) {
   }
 }
 
-export function ToolSettingsPanel() {
+interface ToolSettingsPanelProps {
+  isMobile?: boolean;
+  mobileOpen?: boolean;
+  onMobileOpenChange?: (open: boolean) => void;
+}
+
+export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobileOpenChange }: ToolSettingsPanelProps) {
   const { activeTool, toolSettings, setToolSettings, blocks, selectedBlockId, selectedBlockIds, updateBlock } = useCanvasStore();
 
   const activeSelectedBlockId = selectedBlockIds[0] || selectedBlockId;
@@ -57,6 +65,7 @@ export function ToolSettingsPanel() {
   );
 
   if (!isDrawingSettingsMode && !isBlockSettingsMode) return null;
+  if (isMobile && !mobileOpen) return null;
 
   const applyToSelectedBlocks = (updates: Record<string, any>) => {
     const ids = selectedBlockIds.length
@@ -70,108 +79,198 @@ export function ToolSettingsPanel() {
   const supportsFontSettings = Boolean(
     selectedBlock && BLOCK_TYPES_WITH_FONTS.includes(selectedBlock.type)
   );
+  const supportsTextFormats = Boolean(
+    selectedBlock && BLOCK_TYPES_WITH_TEXT_FORMATS.includes(selectedBlock.type)
+  );
+
+  const formatButtons = [
+    {
+      id: 'textBold',
+      label: 'B',
+      active: isBlockSettingsMode ? Boolean(selectedBlock?.textBold) : toolSettings.textBold,
+      onToggle: () => {
+        if (isBlockSettingsMode) {
+          applyToSelectedBlocks({ textBold: !selectedBlock?.textBold });
+          return;
+        }
+        setToolSettings({ textBold: !toolSettings.textBold });
+      },
+    },
+    {
+      id: 'textItalic',
+      label: 'I',
+      active: isBlockSettingsMode ? Boolean(selectedBlock?.textItalic) : toolSettings.textItalic,
+      onToggle: () => {
+        if (isBlockSettingsMode) {
+          applyToSelectedBlocks({ textItalic: !selectedBlock?.textItalic });
+          return;
+        }
+        setToolSettings({ textItalic: !toolSettings.textItalic });
+      },
+    },
+    {
+      id: 'textUnderline',
+      label: 'U',
+      active: isBlockSettingsMode ? Boolean(selectedBlock?.textUnderline) : toolSettings.textUnderline,
+      onToggle: () => {
+        if (isBlockSettingsMode) {
+          applyToSelectedBlocks({ textUnderline: !selectedBlock?.textUnderline });
+          return;
+        }
+        setToolSettings({ textUnderline: !toolSettings.textUnderline });
+      },
+    },
+    {
+      id: 'textHighlight',
+      label: 'H',
+      active: isBlockSettingsMode ? Boolean(selectedBlock?.textHighlight) : toolSettings.textHighlight,
+      onToggle: () => {
+        if (isBlockSettingsMode) {
+          applyToSelectedBlocks({ textHighlight: !selectedBlock?.textHighlight });
+          return;
+        }
+        setToolSettings({ textHighlight: !toolSettings.textHighlight });
+      },
+    },
+  ];
+
+  const panelClass = isMobile
+    ? 'fixed bottom-[calc(1rem+84px)] right-3 z-50 w-56 max-h-[56vh] overflow-auto border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
+    : 'fixed top-16 right-4 z-50 w-52 border border-border bg-card p-3 space-y-3 animate-fade-in';
 
   return (
-    <div className="fixed top-16 right-4 z-50 w-52 border border-border bg-card p-3 space-y-3 animate-fade-in">
+    <div className={panelClass}>
+      {isMobile && (
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Tool settings</span>
+              <button
+                className="w-6 h-6 inline-flex items-center justify-center text-muted-foreground hover:text-foreground"
+                onClick={() => onMobileOpenChange?.(false)}
+              >
+                <X size={12} />
+              </button>
+            </div>
+      )}
       {isBlockSettingsMode && (
-        <div>
-          <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Selected</span>
-          <div className="mt-1 text-[10px] font-mono text-foreground uppercase tracking-widest">{selectedBlock?.type}</div>
-        </div>
+            <div>
+              <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Selected</span>
+              <div className="mt-1 text-[10px] font-mono text-foreground uppercase tracking-widest">{selectedBlock?.type}</div>
+            </div>
       )}
 
-      {/* Colors */}
-      <div>
-        <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">
-          {isBlockSettingsMode ? 'Background' : 'Color'}
-        </span>
-        <div className="grid grid-cols-6 gap-1.5 mt-1.5">
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              className={`w-6 h-6 border transition-all ${
-                isBlockSettingsMode
-                  ? (selectedBlock?.backgroundColor === c ? 'border-foreground scale-110' : 'border-border')
-                  : (toolSettings.color === c ? 'border-foreground scale-110' : 'border-border')
-              }`}
-              style={{ backgroundColor: c }}
-              onClick={() => {
-                if (isBlockSettingsMode) {
-                  applyToSelectedBlocks({ backgroundColor: c });
-                  return;
-                }
-                setToolSettings({ color: c });
-              }}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Fonts */}
-      {(isDrawingSettingsMode ? activeTool === 'text' : supportsFontSettings) && (
-        <div>
-          <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Font</span>
-          <div className="flex gap-1 mt-1.5">
-            {FONTS.map((f) => (
-              <button
-                key={f}
-                className={`flex-1 h-7 text-[10px] border transition-colors ${
-                  isBlockSettingsMode
-                    ? (selectedBlock?.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
-                    : (toolSettings.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
-                }`}
-                style={{ fontFamily: FONT_MAP[f] }}
-                onClick={() => {
-                  if (isBlockSettingsMode) {
-                    applyToSelectedBlocks({ fontFamily: f });
-                    return;
-                  }
-                  setToolSettings({ fontFamily: f });
-                }}
-              >
-                {f}
-              </button>
-            ))}
+          {/* Colors */}
+          <div>
+            <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">
+              {isBlockSettingsMode ? 'Background' : 'Color'}
+            </span>
+            <div className="grid grid-cols-6 gap-1.5 mt-1.5">
+              {COLORS.map((c) => (
+                <button
+                  key={c}
+                  className={`w-6 h-6 border transition-all ${
+                    isBlockSettingsMode
+                      ? (selectedBlock?.backgroundColor === c ? 'border-foreground scale-110' : 'border-border')
+                      : (toolSettings.color === c ? 'border-foreground scale-110' : 'border-border')
+                  }`}
+                  style={{ backgroundColor: c }}
+                  onClick={() => {
+                    if (isBlockSettingsMode) {
+                      applyToSelectedBlocks({ backgroundColor: c });
+                      return;
+                    }
+                    setToolSettings({ color: c });
+                  }}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
 
-      {/* Sizes */}
-      {isDrawingSettingsMode && (
-      <div>
-        <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Size</span>
-        <div className="flex gap-1 mt-1.5">
-          {SIZES.map((s) => (
-            <button
-              key={s}
-              className={`flex-1 h-7 text-[10px] font-mono border transition-colors ${toolSettings.size === s ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
-              onClick={() => setToolSettings({ size: s })}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      </div>
-      )}
+          {(isDrawingSettingsMode ? activeTool === 'text' : supportsTextFormats) && (
+            <div>
+              <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Format</span>
+              <div className="grid grid-cols-4 gap-1 mt-1.5">
+                {formatButtons.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`h-7 text-[10px] font-mono border transition-colors ${
+                      item.active
+                        ? 'bg-foreground text-background border-foreground'
+                        : 'bg-card text-foreground border-border hover:bg-accent'
+                    } ${item.id === 'textItalic' ? 'italic' : ''} ${item.id === 'textUnderline' ? 'underline' : ''}`}
+                    onClick={item.onToggle}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {/* Shape type */}
-      {isDrawingSettingsMode && activeTool === 'shape' && (
-        <div>
-          <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Shape</span>
-          <div className="grid grid-cols-3 gap-1 mt-1.5">
-            {SHAPES.map((s) => (
-              <button
-                key={s.id}
-                className={`h-8 flex items-center justify-center border transition-colors ${toolSettings.shapeType === s.id ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
-                onClick={() => setToolSettings({ shapeType: s.id })}
-                title={s.id}
-              >
-                <ShapeIcon id={s.id} />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+          {/* Fonts */}
+          {(isDrawingSettingsMode ? activeTool === 'text' : supportsFontSettings) && (
+            <div>
+              <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Font</span>
+              <div className="flex gap-1 mt-1.5">
+                {FONTS.map((f) => (
+                  <button
+                    key={f}
+                    className={`flex-1 h-7 text-[10px] border transition-colors ${
+                      isBlockSettingsMode
+                        ? (selectedBlock?.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
+                        : (toolSettings.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
+                    }`}
+                    style={{ fontFamily: FONT_MAP[f] }}
+                    onClick={() => {
+                      if (isBlockSettingsMode) {
+                        applyToSelectedBlocks({ fontFamily: f });
+                        return;
+                      }
+                      setToolSettings({ fontFamily: f });
+                    }}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sizes */}
+          {isDrawingSettingsMode && (
+            <div>
+              <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Size</span>
+              <div className="flex gap-1 mt-1.5">
+                {SIZES.map((s) => (
+                  <button
+                    key={s}
+                    className={`flex-1 h-7 text-[10px] font-mono border transition-colors ${toolSettings.size === s ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
+                    onClick={() => setToolSettings({ size: s })}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Shape type */}
+          {isDrawingSettingsMode && activeTool === 'shape' && (
+            <div>
+              <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Shape</span>
+              <div className="grid grid-cols-3 gap-1 mt-1.5">
+                {SHAPES.map((s) => (
+                  <button
+                    key={s.id}
+                    className={`h-8 flex items-center justify-center border transition-colors ${toolSettings.shapeType === s.id ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
+                    onClick={() => setToolSettings({ shapeType: s.id })}
+                    title={s.id}
+                  >
+                    <ShapeIcon id={s.id} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
     </div>
   );
 }

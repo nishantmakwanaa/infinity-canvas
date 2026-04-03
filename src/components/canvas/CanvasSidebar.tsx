@@ -28,7 +28,7 @@ export function CanvasSidebar({
   isMobile = false,
 }: CanvasSidebarProps) {
   const [deleteMode, setDeleteMode] = useState(false);
-  const [selectedGroups, setSelectedGroups] = useState<Record<string, boolean>>({});
+  const [selectedPages, setSelectedPages] = useState<Record<string, boolean>>({});
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const groupedCanvases = useMemo(() => {
@@ -79,26 +79,32 @@ export function CanvasSidebar({
     return parseCanvasRouteName(currentCanvas.name).canvasSlug;
   }, [canvases, currentCanvasId]);
 
-  const selectedGroupSlugs = useMemo(
-    () => Object.entries(selectedGroups).filter(([, v]) => v).map(([k]) => k),
-    [selectedGroups]
-  );
-
   const selectedIds = useMemo(() => {
-    if (!selectedGroupSlugs.length) return [] as string[];
-    const selectedSet = new Set(selectedGroupSlugs);
-    return groupedCanvases
-      .filter((group) => selectedSet.has(group.canvasSlug))
-      .flatMap((group) => group.pages.map((page) => page.id));
-  }, [groupedCanvases, selectedGroupSlugs]);
+    return Object.entries(selectedPages)
+      .filter(([, selected]) => selected)
+      .map(([id]) => id);
+  }, [selectedPages]);
 
-  const toggleSelectedGroup = (canvasSlug: string) => {
-    setSelectedGroups((prev) => ({ ...prev, [canvasSlug]: !prev[canvasSlug] }));
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  const toggleSelectedPage = (pageId: string) => {
+    setSelectedPages((prev) => ({ ...prev, [pageId]: !prev[pageId] }));
+  };
+
+  const toggleSelectedGroupPages = (pageIds: string[]) => {
+    setSelectedPages((prev) => {
+      const allSelected = pageIds.every((id) => Boolean(prev[id]));
+      const next = { ...prev };
+      pageIds.forEach((id) => {
+        next[id] = !allSelected;
+      });
+      return next;
+    });
   };
 
   const exitDeleteMode = () => {
     setDeleteMode(false);
-    setSelectedGroups({});
+    setSelectedPages({});
   };
 
   const startResize = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -106,7 +112,7 @@ export function CanvasSidebar({
     e.preventDefault();
     const onMove = (ev: MouseEvent) => {
       const next = (ev.clientX / window.innerWidth) * 100;
-      setWidthPercent(Math.max(10, Math.min(30, next)));
+      setWidthPercent(Math.max(8, Math.min(20, next)));
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -151,7 +157,9 @@ export function CanvasSidebar({
         )}
         {groupedCanvases.map((group) => {
           const isCurrentGroup = group.canvasSlug === currentCanvasGroupSlug;
-          const isSelectedGroup = Boolean(selectedGroups[group.canvasSlug]);
+          const groupPageIds = group.pages.map((page) => page.id);
+          const selectedPagesInGroup = group.pages.filter((page) => Boolean(selectedPages[page.id]));
+          const areAllPagesSelected = group.pages.length > 0 && selectedPagesInGroup.length === group.pages.length;
           const defaultPageId = group.pages[0]?.id;
 
           return (
@@ -162,7 +170,7 @@ export function CanvasSidebar({
                 }`}
                 onClick={() => {
                   if (deleteMode) {
-                    toggleSelectedGroup(group.canvasSlug);
+                    toggleSelectedGroupPages(groupPageIds);
                     return;
                   }
                   if (defaultPageId) onSelectCanvas(defaultPageId);
@@ -170,13 +178,35 @@ export function CanvasSidebar({
               >
                 <div className="flex items-center gap-2">
                   {deleteMode && (
-                    <div className={`w-4 h-4 border flex items-center justify-center ${isSelectedGroup ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
-                      {isSelectedGroup ? <Check size={12} /> : null}
+                    <div className={`w-4 h-4 border flex items-center justify-center ${areAllPagesSelected ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
+                      {areAllPagesSelected ? <Check size={12} /> : null}
                     </div>
                   )}
                   <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
+                  <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
                 </div>
               </button>
+
+              {deleteMode && (
+                <div className="border-t border-border bg-card/60">
+                  {group.pages.map((page) => {
+                    const isSelectedPage = Boolean(selectedPages[page.id]);
+                    const isCurrentPage = page.id === currentCanvasId;
+                    return (
+                      <button
+                        key={page.id}
+                        className={`w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors inline-flex items-center gap-2 ${isCurrentPage ? 'text-foreground' : 'text-muted-foreground'} hover:bg-accent`}
+                        onClick={() => toggleSelectedPage(page.id)}
+                      >
+                        <div className={`w-3.5 h-3.5 border flex items-center justify-center ${isSelectedPage ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
+                          {isSelectedPage ? <Check size={10} /> : null}
+                        </div>
+                        <span className="truncate">{page.pageLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
@@ -195,13 +225,6 @@ export function CanvasSidebar({
         ) : (
           <div className="flex items-center gap-2 min-w-0">
             <button
-              className="h-9 px-3 border border-border text-xs font-mono hover:bg-accent transition-colors inline-flex items-center gap-2"
-              onClick={exitDeleteMode}
-              title="Cancel"
-            >
-              <X size={14} /> Cancel
-            </button>
-            <button
               className={`h-9 px-3 border text-xs font-mono inline-flex items-center gap-2 ${
                 selectedIds.length ? 'bg-foreground text-background border-foreground hover:opacity-90' : 'bg-card text-muted-foreground border-border opacity-60 cursor-not-allowed'
               }`}
@@ -211,42 +234,46 @@ export function CanvasSidebar({
             >
               <Trash2 size={14} /> Delete ({selectedIds.length})
             </button>
+            <button
+              className="h-9 w-9 border border-border inline-flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              onClick={exitDeleteMode}
+              title="Cancel"
+              aria-label="Cancel"
+            >
+              <X size={14} />
+            </button>
           </div>
         )}
 
         <span className="ml-auto min-w-0 max-w-[42%] truncate text-right text-[10px] font-mono text-muted-foreground">
-          {deleteMode ? 'Select canvases to delete' : `${groupedCanvases.length} total`}
+          {deleteMode ? 'Select pages to delete' : `${groupedCanvases.length} total`}
         </span>
       </div>
 
       <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <DialogContent className="max-w-sm" data-no-translate="true">
           <DialogHeader>
-            <DialogTitle className="text-sm font-mono">Delete selected canvases?</DialogTitle>
+            <DialogTitle className="text-sm font-mono">Delete selected pages?</DialogTitle>
             <DialogDescription className="text-xs font-mono">
-              This action cannot be undone. {selectedGroupSlugs.length} main canvas{selectedGroupSlugs.length > 1 ? 'es' : ''} ({selectedIds.length} pages) will be removed.
+              This action cannot be undone. {selectedIds.length} page{selectedIds.length > 1 ? 's' : ''} will be removed.
             </DialogDescription>
           </DialogHeader>
 
           <div className="max-h-44 overflow-auto border border-border">
-            {groupedCanvases
-              .filter((group) => selectedGroups[group.canvasSlug])
-              .map((group) => (
-                <div key={group.canvasSlug} className="px-2 py-1.5 text-xs font-mono border-b border-border last:border-b-0">
-                  {group.canvasLabel} ({group.pages.length} pages)
-                </div>
-              ))}
+            {groupedCanvases.map((group) =>
+              group.pages
+                .filter((page) => selectedIdSet.has(page.id))
+                .map((page) => (
+                  <div key={page.id} className="px-2 py-1.5 text-xs font-mono border-b border-border last:border-b-0">
+                    {group.canvasLabel} / {page.pageLabel}
+                  </div>
+                ))
+            )}
           </div>
 
-          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col">
+          <DialogFooter className="flex items-center justify-start gap-2 sm:justify-start">
             <button
-              className="h-8 w-full px-3 border border-border text-xs font-mono"
-              onClick={() => setConfirmDeleteOpen(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="h-8 w-full px-3 border border-foreground bg-foreground text-background text-xs font-mono"
+              className="h-8 px-3 border border-foreground bg-foreground text-background text-xs font-mono"
               onClick={() => {
                 onDeleteCanvases(selectedIds);
                 setConfirmDeleteOpen(false);
@@ -254,6 +281,14 @@ export function CanvasSidebar({
               }}
             >
               Confirm delete
+            </button>
+            <button
+              className="h-8 w-8 border border-border inline-flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent"
+              onClick={() => setConfirmDeleteOpen(false)}
+              title="Cancel"
+              aria-label="Cancel"
+            >
+              <X size={14} />
             </button>
           </DialogFooter>
         </DialogContent>
