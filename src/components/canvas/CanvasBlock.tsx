@@ -1,4 +1,4 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState } from 'react';
 import { useCanvasStore, CanvasBlock } from '@/store/canvasStore';
 import { NoteBlock } from './blocks/NoteBlock';
 import { LinkBlock } from './blocks/LinkBlock';
@@ -8,9 +8,10 @@ import { X } from 'lucide-react';
 
 interface Props {
   block: CanvasBlock;
+  readOnly?: boolean;
 }
 
-export function CanvasBlockComponent({ block }: Props) {
+export function CanvasBlockComponent({ block, readOnly }: Props) {
   const { updateBlock, deleteBlock, selectBlock, selectedBlockId, zoom } = useCanvasStore();
   const isSelected = selectedBlockId === block.id;
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -18,6 +19,7 @@ export function CanvasBlockComponent({ block }: Props) {
   const [isResizing, setIsResizing] = useState(false);
 
   const handleDragStart = (e: React.MouseEvent) => {
+    if (readOnly) return;
     if ((e.target as HTMLElement).dataset.resize || (e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
     e.stopPropagation();
     selectBlock(block.id);
@@ -39,6 +41,7 @@ export function CanvasBlockComponent({ block }: Props) {
   };
 
   const handleResizeStart = (e: React.MouseEvent) => {
+    if (readOnly) return;
     e.stopPropagation();
     e.preventDefault();
     setIsResizing(true);
@@ -65,16 +68,16 @@ export function CanvasBlockComponent({ block }: Props) {
 
   const renderContent = () => {
     switch (block.type) {
-      case 'note': return <NoteBlock block={block} />;
-      case 'link': return <LinkBlock block={block} />;
-      case 'todo': return <TodoBlock block={block} />;
-      case 'image': return <ImageBlock block={block} />;
+      case 'note': return <NoteBlock block={block} readOnly={readOnly} />;
+      case 'link': return <LinkBlock block={block} readOnly={readOnly} />;
+      case 'todo': return <TodoBlock block={block} readOnly={readOnly} />;
+      case 'image': return <ImageBlock block={block} readOnly={readOnly} />;
     }
   };
 
   return (
     <div
-      className={`absolute block-base select-none ${isSelected ? 'ring-1 ring-foreground' : ''} ${isResizing ? '' : 'transition-none'}`}
+      className={`absolute block-base select-none ${isSelected && !readOnly ? 'ring-1 ring-foreground' : ''}`}
       style={{
         left: block.x,
         top: block.y,
@@ -84,16 +87,18 @@ export function CanvasBlockComponent({ block }: Props) {
       onMouseDown={handleDragStart}
     >
       {/* Header bar */}
-      <div className="flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 cursor-move">
+      <div className={`flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 ${readOnly ? '' : 'cursor-move'}`}>
         <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
           {block.type}
         </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); deleteBlock(block.id); }}
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <X size={12} />
-        </button>
+        {!readOnly && (
+          <button
+            onClick={(e) => { e.stopPropagation(); deleteBlock(block.id); }}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X size={12} />
+          </button>
+        )}
       </div>
 
       {/* Content */}
@@ -102,11 +107,13 @@ export function CanvasBlockComponent({ block }: Props) {
       </div>
 
       {/* Resize handle */}
-      <div
-        data-resize="true"
-        className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize border-r-2 border-b-2 border-muted-foreground/40 hover:border-foreground transition-colors"
-        onMouseDown={handleResizeStart}
-      />
+      {!readOnly && (
+        <div
+          data-resize="true"
+          className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize border-r-2 border-b-2 border-muted-foreground/40 hover:border-foreground transition-colors"
+          onMouseDown={handleResizeStart}
+        />
+      )}
     </div>
   );
 }

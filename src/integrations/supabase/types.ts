@@ -14,7 +14,71 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      canvases: {
+        Row: {
+          blocks: Json
+          created_at: string
+          id: string
+          name: string
+          pan_x: number
+          pan_y: number
+          updated_at: string
+          user_id: string
+          zoom: number
+        }
+        Insert: {
+          blocks?: Json
+          created_at?: string
+          id?: string
+          name?: string
+          pan_x?: number
+          pan_y?: number
+          updated_at?: string
+          user_id: string
+          zoom?: number
+        }
+        Update: {
+          blocks?: Json
+          created_at?: string
+          id?: string
+          name?: string
+          pan_x?: number
+          pan_y?: number
+          updated_at?: string
+          user_id?: string
+          zoom?: number
+        }
+        Relationships: []
+      }
+      shared_canvases: {
+        Row: {
+          canvas_id: string
+          created_at: string
+          id: string
+          share_token: string
+        }
+        Insert: {
+          canvas_id: string
+          created_at?: string
+          id?: string
+          share_token?: string
+        }
+        Update: {
+          canvas_id?: string
+          created_at?: string
+          id?: string
+          share_token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_canvases_canvas_id_fkey"
+            columns: ["canvas_id"]
+            isOneToOne: false
+            referencedRelation: "canvases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
