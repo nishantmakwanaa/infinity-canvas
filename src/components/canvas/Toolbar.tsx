@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCanvasStore, type BlockType } from '@/store/canvasStore';
-import { StickyNote, Link, CheckSquare, Film, Pencil, Eraser, Type, Square, Minus, ArrowRight, ZoomIn, ZoomOut, Maximize, MousePointer2, ChevronUp, ChevronDown, SlidersHorizontal, Undo2, Redo2, Copy, Scissors, Trash2 } from 'lucide-react';
+import { StickyNote, Link, CheckSquare, Film, Pencil, Eraser, Type, Square, Minus, ArrowRight, ZoomIn, ZoomOut, Maximize, MousePointer2, Hand, ChevronUp, ChevronDown, SlidersHorizontal, Undo2, Redo2, Copy, Scissors, Trash2 } from 'lucide-react';
 
 interface ToolbarProps {
   leftOffsetPercent?: number;
@@ -53,6 +53,7 @@ export function Toolbar({
 
   const allTools = [
     { icon: MousePointer2, id: 'select' as const, label: 'Cursor', kind: 'select' as const },
+    { icon: Hand, id: 'hand' as const, label: 'Hand', kind: 'select' as const },
     ...blockTools.map((tool) => ({ ...tool, kind: 'block' as const })),
     ...drawTools.map((tool) => ({ ...tool, kind: 'draw' as const })),
   ];
@@ -133,7 +134,7 @@ export function Toolbar({
           } else if (tool.kind === 'draw') {
             setActiveTool(tool.id as any);
           } else {
-            setActiveTool('select');
+            setActiveTool(tool.id as any);
           }
 
           if (isMobile && onOpenMobileSettings && toolsThatNeedSettings.has(tool.id)) {

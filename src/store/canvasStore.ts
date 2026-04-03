@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 export type BlockType = 'note' | 'link' | 'todo' | 'media';
 export type DrawingTool = 'pencil' | 'eraser' | 'text' | 'shape' | 'line' | 'arrow';
-export type ActiveTool = 'select' | BlockType | DrawingTool;
+export type ActiveTool = 'select' | 'hand' | BlockType | DrawingTool;
 
 export interface TodoItem {
   id: string;

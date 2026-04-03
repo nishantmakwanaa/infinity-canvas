@@ -50,6 +50,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   });
   const lastMouse = useRef({ x: 0, y: 0 });
   const lastTouch = useRef({ x: 0, y: 0 });
+  const isHandTool = activeTool === 'hand';
   const isDrawing = DRAWING_TOOLS.includes(activeTool);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; canvasX: number; canvasY: number; blockId: string | null }>({
     open: false,
@@ -140,6 +141,14 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }
     if (menu.open) setMenu((m) => ({ ...m, open: false }));
     if (isDrawing) return;
+
+    if (isHandTool) {
+      isPanning.current = true;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      selectBlock(null);
+      return;
+    }
+
     if (e.target === containerRef.current || (e.target as HTMLElement).dataset.canvas) {
       isPanning.current = true;
       lastMouse.current = { x: e.clientX, y: e.clientY };
@@ -189,6 +198,14 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }
 
     if (e.touches.length !== 1) return;
+
+    if (isHandTool) {
+      isTouchPinching.current = false;
+      isTouchPanning.current = true;
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      selectBlock(null);
+      return;
+    }
 
     const target = e.target as HTMLElement;
     if (target.closest('input, textarea, button, video, iframe, [contenteditable="true"]')) {
@@ -486,7 +503,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     <div
       ref={containerRef}
       data-canvas="true"
-      className={`fixed inset-0 canvas-dots overflow-hidden select-none ${isDrawing ? 'cursor-crosshair' : 'cursor-default'}`}
+      className={`fixed inset-0 canvas-dots overflow-hidden select-none ${isDrawing ? 'cursor-crosshair' : isHandTool ? 'cursor-grab' : 'cursor-default'}`}
       style={{ ...dotOffset, left: `${leftOffsetPercent}%` }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -507,7 +524,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
           <div
             data-canvas="true"
             data-canvas-content="true"
-            className="absolute inset-0 origin-top-left"
+            className={`absolute inset-0 origin-top-left ${isHandTool ? 'pointer-events-none' : ''}`}
             style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
           >
             {blocks.map((block) => (

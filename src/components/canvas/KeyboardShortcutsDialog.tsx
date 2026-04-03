@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 const SHORTCUTS = [
   { section: 'Tools', items: [
     ['Cursor / Select', 'Alt + Shift + V'],
+    ['Hand / Pan', 'Alt + Shift + W'],
     ['Draw (Pencil)', 'Alt + Shift + P'],
     ['Eraser', 'Alt + Shift + E'],
     ['Note', 'Alt + Shift + N'],

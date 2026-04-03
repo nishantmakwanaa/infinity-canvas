@@ -1,5 +1,6 @@
 import { useCanvasStore, COLORS, FONT_MAP } from '@/store/canvasStore';
 import { X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
 const DRAWING_TOOLS_WITH_SETTINGS = ['pencil', 'shape', 'line', 'arrow', 'text'];
 const BLOCK_TYPES_WITH_STYLES = ['note', 'link', 'todo', 'media'];
@@ -53,6 +54,9 @@ interface ToolSettingsPanelProps {
 
 export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobileOpenChange }: ToolSettingsPanelProps) {
   const { activeTool, toolSettings, setToolSettings, blocks, selectedBlockId, selectedBlockIds, updateBlock } = useCanvasStore();
+  const [isDarkMode, setIsDarkMode] = useState(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+  );
 
   const activeSelectedBlockId = selectedBlockIds[0] || selectedBlockId;
   const selectedBlock = activeSelectedBlockId
@@ -66,6 +70,16 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
 
   if (!isDrawingSettingsMode && !isBlockSettingsMode) return null;
   if (isMobile && !mobileOpen) return null;
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    const sync = () => setIsDarkMode(root.classList.contains('dark'));
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   const applyToSelectedBlocks = (updates: Record<string, any>) => {
     const ids = selectedBlockIds.length
@@ -135,8 +149,16 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   ];
 
   const panelClass = isMobile
-    ? 'fixed bottom-[calc(1rem+84px)] right-3 z-50 w-56 max-h-[56vh] overflow-auto border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
-    : 'fixed top-16 right-4 z-50 w-52 border border-border bg-card p-3 space-y-3 animate-fade-in';
+    ? 'fixed bottom-[calc(1rem+88px)] right-3 z-[65] w-56 max-h-[56vh] overflow-auto border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
+    : 'fixed top-16 right-4 z-50 w-56 border border-border bg-card p-3 space-y-3 animate-fade-in';
+
+  const visibleColors = useMemo(
+    () => COLORS.map((color) => (isDarkMode && color.toLowerCase() === '#000000' ? '#ffffff' : color)),
+    [isDarkMode]
+  );
+
+  const sectionGridClass = 'grid grid-cols-4 gap-1.5 mt-1.5';
+  const optionButtonClass = 'h-8 text-[10px] font-mono border transition-colors touch-manipulation';
 
   return (
     <div className={panelClass}>
@@ -163,14 +185,14 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
             <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">
               {isBlockSettingsMode ? 'Background' : 'Color'}
             </span>
-            <div className="grid grid-cols-6 gap-1.5 mt-1.5">
-              {COLORS.map((c) => (
+            <div className={sectionGridClass}>
+              {visibleColors.map((c) => (
                 <button
                   key={c}
-                  className={`w-6 h-6 border transition-all ${
+                  className={`h-8 border transition-colors touch-manipulation ${
                     isBlockSettingsMode
-                      ? (selectedBlock?.backgroundColor === c ? 'border-foreground scale-110' : 'border-border')
-                      : (toolSettings.color === c ? 'border-foreground scale-110' : 'border-border')
+                      ? (selectedBlock?.backgroundColor === c ? 'border-foreground' : 'border-border')
+                      : (toolSettings.color === c ? 'border-foreground' : 'border-border')
                   }`}
                   style={{ backgroundColor: c }}
                   onClick={() => {
@@ -188,11 +210,11 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
           {(isDrawingSettingsMode ? activeTool === 'text' : supportsTextFormats) && (
             <div>
               <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Format</span>
-              <div className="grid grid-cols-4 gap-1 mt-1.5">
+              <div className={sectionGridClass}>
                 {formatButtons.map((item) => (
                   <button
                     key={item.id}
-                    className={`h-7 text-[10px] font-mono border transition-colors ${
+                    className={`${optionButtonClass} ${
                       item.active
                         ? 'bg-foreground text-background border-foreground'
                         : 'bg-card text-foreground border-border hover:bg-accent'
@@ -210,11 +232,11 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
           {(isDrawingSettingsMode ? activeTool === 'text' : supportsFontSettings) && (
             <div>
               <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Font</span>
-              <div className="flex gap-1 mt-1.5">
+              <div className={sectionGridClass}>
                 {FONTS.map((f) => (
                   <button
                     key={f}
-                    className={`flex-1 h-7 text-[10px] border transition-colors ${
+                    className={`${optionButtonClass} ${
                       isBlockSettingsMode
                         ? (selectedBlock?.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
                         : (toolSettings.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
@@ -239,11 +261,11 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
           {isDrawingSettingsMode && (
             <div>
               <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Size</span>
-              <div className="flex gap-1 mt-1.5">
+              <div className={sectionGridClass}>
                 {SIZES.map((s) => (
                   <button
                     key={s}
-                    className={`flex-1 h-7 text-[10px] font-mono border transition-colors ${toolSettings.size === s ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
+                    className={`${optionButtonClass} ${toolSettings.size === s ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
                     onClick={() => setToolSettings({ size: s })}
                   >
                     {s}
@@ -257,11 +279,11 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
           {isDrawingSettingsMode && activeTool === 'shape' && (
             <div>
               <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Shape</span>
-              <div className="grid grid-cols-3 gap-1 mt-1.5">
+              <div className={sectionGridClass}>
                 {SHAPES.map((s) => (
                   <button
                     key={s.id}
-                    className={`h-8 flex items-center justify-center border transition-colors ${toolSettings.shapeType === s.id ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
+                    className={`h-8 flex items-center justify-center border transition-colors touch-manipulation ${toolSettings.shapeType === s.id ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
                     onClick={() => setToolSettings({ shapeType: s.id })}
                     title={s.id}
                   >

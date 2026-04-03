@@ -373,6 +373,7 @@ const Index = () => {
       if (code === 'KeyM') { e.preventDefault(); store.addBlock('media'); return; }
 
       if (code === 'KeyV') { e.preventDefault(); store.setActiveTool('select'); return; }
+      if (code === 'KeyW') { e.preventDefault(); store.setActiveTool('hand'); return; }
       if (code === 'KeyP') { e.preventDefault(); store.setActiveTool('pencil'); return; }
       if (code === 'KeyE') { e.preventDefault(); store.setActiveTool('eraser'); return; }
       if (code === 'KeyQ') { e.preventDefault(); store.setActiveTool('text'); return; }
