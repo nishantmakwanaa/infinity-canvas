@@ -20,6 +20,8 @@ export interface CanvasBlock {
   content: string;
   url?: string;
   todos?: TodoItem[];
+  backgroundColor?: string;
+  fontFamily?: FontOption;
 }
 
 export type DrawingElement =
@@ -122,6 +124,7 @@ export const useCanvasStore = create<CanvasState>((set) => ({
       content: '',
       url: type === 'link' ? '' : type === 'media' ? '' : undefined,
       todos: type === 'todo' ? [{ id: genId(), text: '', done: false }] : undefined,
+      fontFamily: type === 'note' || type === 'link' || type === 'todo' ? 'mono' : undefined,
     };
     set((s) => ({ blocks: [...s.blocks, block], selectedBlockId: block.id, activeTool: 'select' }));
   },

@@ -25,8 +25,10 @@ const App = () => {
         >
           <Routes>
             <Route path="/view/:token" element={<SharedCanvas />} />
+            <Route path="/:username/view/:canvasName/:pageName" element={<SharedCanvas />} />
             <Route path="/:username/view/:canvasName" element={<SharedCanvas />} />
             <Route path="/manual" element={<Manual />} />
+            <Route path="/:username/:canvasName/:pageName" element={<Index />} />
             <Route path="/:username?/:canvasName?" element={<Index />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

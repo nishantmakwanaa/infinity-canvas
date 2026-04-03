@@ -75,7 +75,13 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
     <div
       data-block-id={block.id}
       className={`absolute block-base select-none ${isSelected && !readOnly ? 'ring-2 ring-foreground ring-offset-1' : ''}`}
-      style={{ left: block.x, top: block.y, width: block.width, height: block.height }}
+      style={{
+        left: block.x,
+        top: block.y,
+        width: block.width,
+        height: block.height,
+        backgroundColor: block.backgroundColor || undefined,
+      }}
       onMouseDown={handleDragStart}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}

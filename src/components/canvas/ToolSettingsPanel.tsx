@@ -1,6 +1,8 @@
 import { useCanvasStore, COLORS, FONT_MAP } from '@/store/canvasStore';
 
 const DRAWING_TOOLS_WITH_SETTINGS = ['pencil', 'shape', 'line', 'arrow', 'text'];
+const BLOCK_TYPES_WITH_STYLES = ['note', 'link', 'todo', 'media'];
+const BLOCK_TYPES_WITH_FONTS = ['note', 'link', 'todo'];
 const SIZES = ['S', 'M', 'L', 'XL'] as const;
 const FONTS = ['default', 'sans', 'serif', 'mono'] as const;
 const SHAPES = [
@@ -42,38 +44,90 @@ function ShapeIcon({ id }: { id: string }) {
 }
 
 export function ToolSettingsPanel() {
-  const { activeTool, toolSettings, setToolSettings } = useCanvasStore();
+  const { activeTool, toolSettings, setToolSettings, blocks, selectedBlockId, selectedBlockIds, updateBlock } = useCanvasStore();
 
-  if (!DRAWING_TOOLS_WITH_SETTINGS.includes(activeTool)) return null;
+  const activeSelectedBlockId = selectedBlockIds[0] || selectedBlockId;
+  const selectedBlock = activeSelectedBlockId
+    ? blocks.find((block) => block.id === activeSelectedBlockId) || null
+    : null;
+
+  const isDrawingSettingsMode = DRAWING_TOOLS_WITH_SETTINGS.includes(activeTool);
+  const isBlockSettingsMode = Boolean(
+    selectedBlock && BLOCK_TYPES_WITH_STYLES.includes(selectedBlock.type)
+  );
+
+  if (!isDrawingSettingsMode && !isBlockSettingsMode) return null;
+
+  const applyToSelectedBlocks = (updates: Record<string, any>) => {
+    const ids = selectedBlockIds.length
+      ? selectedBlockIds
+      : selectedBlockId
+        ? [selectedBlockId]
+        : [];
+    ids.forEach((id) => updateBlock(id, updates));
+  };
+
+  const supportsFontSettings = Boolean(
+    selectedBlock && BLOCK_TYPES_WITH_FONTS.includes(selectedBlock.type)
+  );
 
   return (
     <div className="fixed top-16 right-4 z-50 w-52 border border-border bg-card p-3 space-y-3 animate-fade-in">
+      {isBlockSettingsMode && (
+        <div>
+          <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Selected</span>
+          <div className="mt-1 text-[10px] font-mono text-foreground uppercase tracking-widest">{selectedBlock?.type}</div>
+        </div>
+      )}
+
       {/* Colors */}
       <div>
-        <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Color</span>
+        <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">
+          {isBlockSettingsMode ? 'Background' : 'Color'}
+        </span>
         <div className="grid grid-cols-6 gap-1.5 mt-1.5">
           {COLORS.map((c) => (
             <button
               key={c}
-              className={`w-6 h-6 border transition-all ${toolSettings.color === c ? 'border-foreground scale-110' : 'border-border'}`}
+              className={`w-6 h-6 border transition-all ${
+                isBlockSettingsMode
+                  ? (selectedBlock?.backgroundColor === c ? 'border-foreground scale-110' : 'border-border')
+                  : (toolSettings.color === c ? 'border-foreground scale-110' : 'border-border')
+              }`}
               style={{ backgroundColor: c }}
-              onClick={() => setToolSettings({ color: c })}
+              onClick={() => {
+                if (isBlockSettingsMode) {
+                  applyToSelectedBlocks({ backgroundColor: c });
+                  return;
+                }
+                setToolSettings({ color: c });
+              }}
             />
           ))}
         </div>
       </div>
 
       {/* Fonts */}
-      {(activeTool === 'text') && (
+      {(isDrawingSettingsMode ? activeTool === 'text' : supportsFontSettings) && (
         <div>
           <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Font</span>
           <div className="flex gap-1 mt-1.5">
             {FONTS.map((f) => (
               <button
                 key={f}
-                className={`flex-1 h-7 text-[10px] border transition-colors ${toolSettings.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent'}`}
+                className={`flex-1 h-7 text-[10px] border transition-colors ${
+                  isBlockSettingsMode
+                    ? (selectedBlock?.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
+                    : (toolSettings.fontFamily === f ? 'bg-foreground text-background border-foreground' : 'bg-card text-foreground border-border hover:bg-accent')
+                }`}
                 style={{ fontFamily: FONT_MAP[f] }}
-                onClick={() => setToolSettings({ fontFamily: f })}
+                onClick={() => {
+                  if (isBlockSettingsMode) {
+                    applyToSelectedBlocks({ fontFamily: f });
+                    return;
+                  }
+                  setToolSettings({ fontFamily: f });
+                }}
               >
                 {f}
               </button>
@@ -83,6 +137,7 @@ export function ToolSettingsPanel() {
       )}
 
       {/* Sizes */}
+      {isDrawingSettingsMode && (
       <div>
         <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Size</span>
         <div className="flex gap-1 mt-1.5">
@@ -97,9 +152,10 @@ export function ToolSettingsPanel() {
           ))}
         </div>
       </div>
+      )}
 
       {/* Shape type */}
-      {activeTool === 'shape' && (
+      {isDrawingSettingsMode && activeTool === 'shape' && (
         <div>
           <span className="text-[9px] font-mono text-muted-foreground uppercase tracking-widest">Shape</span>
           <div className="grid grid-cols-3 gap-1 mt-1.5">

@@ -1,10 +1,11 @@
-import { useCanvasStore, CanvasBlock, TodoItem } from '@/store/canvasStore';
+import { useCanvasStore, CanvasBlock, TodoItem, FONT_MAP } from '@/store/canvasStore';
 import { Plus, Check } from 'lucide-react';
 import { getTodoSize } from '@/lib/blockSizing';
 
 export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
   const todos = block.todos || [];
+  const textFont = FONT_MAP[block.fontFamily || 'mono'];
 
   const updateTodo = (todoId: string, updates: Partial<TodoItem>) => {
     if (readOnly) return;
@@ -40,7 +41,7 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
   };
 
   return (
-    <div className="p-3 space-y-1.5">
+    <div className="p-3 space-y-1.5" style={{ fontFamily: textFont }}>
       {todos.map((todo) => (
         <div key={todo.id} className="flex items-center gap-2.5 group">
           <button
@@ -59,6 +60,7 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
               className={`flex-1 text-sm font-mono ${
                 todo.done ? 'line-through text-muted-foreground' : 'text-foreground'
               }`}
+              style={{ fontFamily: textFont }}
             >
               {todo.text || 'To do...'}
             </span>
@@ -67,6 +69,7 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
               className={`flex-1 bg-transparent text-sm font-mono focus:outline-none placeholder:text-muted-foreground ${
                 todo.done ? 'line-through text-muted-foreground' : 'text-foreground'
               }`}
+              style={{ fontFamily: textFont }}
               placeholder="To do..."
               value={todo.text}
               onChange={(e) => updateTodo(todo.id, { text: e.target.value })}

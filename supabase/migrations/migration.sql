@@ -23,15 +23,53 @@ create table if not exists public.canvases (
   updated_at  timestamptz       not null default now()
 );
 
--- owner_username / canvas_name are populated automatically by trigger on insert.
+-- owner_username / canvas_name / page_name are populated automatically by trigger on insert.
 create table if not exists public.shared_canvases (
   id              uuid        primary key default gen_random_uuid(),
   canvas_id       uuid        not null references public.canvases(id) on delete cascade,
   share_token     text        not null unique default encode(gen_random_bytes(16), 'hex'),
   owner_username  text        not null,
   canvas_name     text        not null,
+  page_name       text        not null default 'page-1.cnvs',
   created_at      timestamptz not null default now()
 );
+
+alter table public.shared_canvases
+  add column if not exists page_name text;
+
+update public.shared_canvases sc
+set
+  canvas_name = case
+    when position('/' in c.name) > 0 then split_part(c.name, '/', 1)
+    else c.name
+  end,
+  page_name = case
+    when position('/' in c.name) > 0 then split_part(c.name, '/', 2)
+    else 'page-1.cnvs'
+  end
+from public.canvases c
+where c.id = sc.canvas_id
+  and (
+    sc.page_name is null
+    or btrim(sc.page_name) = ''
+    or position('/' in c.name) > 0
+  );
+
+update public.shared_canvases
+set page_name = 'page-1.cnvs'
+where page_name is null or btrim(page_name) = '';
+
+update public.shared_canvases sc
+set owner_username = lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user'))
+from public.canvases c
+join auth.users u on u.id = c.user_id
+where sc.canvas_id = c.id;
+
+alter table public.shared_canvases
+  alter column page_name set default 'page-1.cnvs';
+
+alter table public.shared_canvases
+  alter column page_name set not null;
 
 -- -----------------------------------------------------------------------------
 -- Indexes
@@ -52,8 +90,9 @@ create unique index if not exists shared_canvases_canvas_id_key
   on public.shared_canvases(canvas_id);
 create unique index if not exists shared_canvases_share_token_key
   on public.shared_canvases(share_token);
-create unique index if not exists shared_canvases_owner_canvas_key   -- unique public route per user+name
-  on public.shared_canvases(owner_username, canvas_name);
+drop index if exists shared_canvases_owner_canvas_key;
+create unique index if not exists shared_canvases_owner_canvas_page_key   -- unique public route per user+name+page
+  on public.shared_canvases(owner_username, canvas_name, page_name);
 
 -- -----------------------------------------------------------------------------
 -- Functions & Triggers
@@ -77,7 +116,7 @@ for each row
 execute function public.set_updated_at();
 
 
--- 2. Auto-populate owner_username + canvas_name whenever a shared_canvases
+-- 2. Auto-populate owner_username + canvas_name + page_name whenever a shared_canvases
 --    row is inserted or its canvas_id is changed.
 create or replace function public.sync_shared_canvas_route_fields()
 returns trigger
@@ -85,28 +124,27 @@ language plpgsql
 as $$
 declare
   v_canvas_name     text;
+  v_page_name       text;
   v_owner_username  text;
 begin
   select
-    c.name,
-    lower(
-      regexp_replace(
-        coalesce(
-          nullif(u.raw_user_meta_data ->> 'full_name', ''),
-          nullif(u.raw_user_meta_data ->> 'name', ''),
-          nullif(split_part(u.email, '@', 1), ''),
-          'user'
-        ),
-        '\s+', '-', 'g'
-      )
-    )
-  into v_canvas_name, v_owner_username
+    case
+      when position('/' in c.name) > 0 then split_part(c.name, '/', 1)
+      else c.name
+    end,
+    case
+      when position('/' in c.name) > 0 then split_part(c.name, '/', 2)
+      else 'page-1.cnvs'
+    end,
+    lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user'))
+  into v_canvas_name, v_page_name, v_owner_username
   from public.canvases c
   join auth.users u on u.id = c.user_id
   where c.id = new.canvas_id;
 
-  new.canvas_name     := v_canvas_name;
-  new.owner_username  := v_owner_username;
+  new.canvas_name     := coalesce(nullif(v_canvas_name, ''), 'untitled');
+  new.page_name       := coalesce(nullif(v_page_name, ''), 'page-1.cnvs');
+  new.owner_username  := coalesce(v_owner_username, 'user');
   return new;
 end;
 $$;
@@ -119,7 +157,7 @@ for each row
 execute function public.sync_shared_canvas_route_fields();
 
 
--- 3. Keep canvas_name in shared_canvases in sync when a canvas is renamed.
+-- 3. Keep canvas_name/page_name in shared_canvases in sync when a canvas is renamed.
 create or replace function public.propagate_canvas_name_to_shares()
 returns trigger
 language plpgsql
@@ -127,7 +165,15 @@ as $$
 begin
   if new.name is distinct from old.name then
     update public.shared_canvases
-    set canvas_name = new.name
+    set
+      canvas_name = case
+        when position('/' in new.name) > 0 then split_part(new.name, '/', 1)
+        else new.name
+      end,
+      page_name = case
+        when position('/' in new.name) > 0 then split_part(new.name, '/', 2)
+        else 'page-1.cnvs'
+      end
     where canvas_id = new.id;
   end if;
   return new;
@@ -229,7 +275,8 @@ using (
 -- Resolves /:username/view/:canvasName  →  canvas_id via shared_canvases.
 create or replace function public.resolve_shared_canvas(
   p_owner_username  text,
-  p_canvas_name     text
+  p_canvas_name     text,
+  p_page_name       text default null
 )
 returns uuid
 language sql
@@ -241,7 +288,28 @@ as $$
   from public.shared_canvases sc
   where sc.owner_username = p_owner_username
     and sc.canvas_name    = p_canvas_name
+    and (
+      p_page_name is null
+      or sc.page_name = p_page_name
+    )
+  order by sc.created_at desc
   limit 1;
+$$;
+
+revoke all    on function public.resolve_shared_canvas(text, text, text) from public;
+grant execute on function public.resolve_shared_canvas(text, text, text) to anon, authenticated;
+
+create or replace function public.resolve_shared_canvas(
+  p_owner_username  text,
+  p_canvas_name     text
+)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.resolve_shared_canvas(p_owner_username, p_canvas_name, null);
 $$;
 
 revoke all    on function public.resolve_shared_canvas(text, text) from public;
@@ -251,7 +319,8 @@ grant execute on function public.resolve_shared_canvas(text, text) to anon, auth
 -- Resolves /:username/:canvasName  →  canvas_id via canvases directly.
 create or replace function public.resolve_user_canvas(
   p_owner_username  text,
-  p_canvas_name     text
+  p_canvas_name     text,
+  p_page_name       text default null
 )
 returns uuid
 language sql
@@ -262,20 +331,33 @@ as $$
   select c.id
   from public.canvases c
   join auth.users u on u.id = c.user_id
-  where lower(
-    regexp_replace(
-      coalesce(
-        nullif(u.raw_user_meta_data ->> 'full_name', ''),
-        nullif(u.raw_user_meta_data ->> 'name', ''),
-        nullif(split_part(u.email, '@', 1), ''),
-        'user'
-      ),
-      '\s+', '-', 'g'
+  where auth.uid() is not null
+    and c.user_id = auth.uid()
+    and lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) = p_owner_username
+    and (
+      c.name = p_canvas_name || '/' || coalesce(p_page_name, 'page-1.cnvs')
+      or c.name = p_canvas_name
     )
-  ) = p_owner_username
-    and c.name = p_canvas_name
-  order by c.updated_at desc
+  order by
+    case when c.name = p_canvas_name || '/' || coalesce(p_page_name, 'page-1.cnvs') then 0 else 1 end,
+    c.updated_at desc
   limit 1;
+$$;
+
+revoke all    on function public.resolve_user_canvas(text, text, text) from public;
+grant execute on function public.resolve_user_canvas(text, text, text) to anon, authenticated;
+
+create or replace function public.resolve_user_canvas(
+  p_owner_username  text,
+  p_canvas_name     text
+)
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.resolve_user_canvas(p_owner_username, p_canvas_name, null);
 $$;
 
 revoke all    on function public.resolve_user_canvas(text, text) from public;

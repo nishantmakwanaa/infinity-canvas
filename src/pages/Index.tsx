@@ -11,6 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCanvasStore } from '@/store/canvasStore';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { getPageNumber, nextPageSlug, parseCanvasRouteName } from '@/lib/canvasNaming';
 
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
 
@@ -26,7 +27,7 @@ const Index = () => {
   useThemeTime();
   const { user, session, loading, signInWithGoogle, signOut } = useAuth();
   const navigate = useNavigate();
-  const params = useParams<{ username?: string; canvasName?: string }>();
+  const params = useParams<{ username?: string; canvasName?: string; pageName?: string }>();
   const {
     canvases,
     currentCanvasId,
@@ -45,14 +46,46 @@ const Index = () => {
   const isMobile = useIsMobile();
 
   const isLoggedIn = Boolean(session?.user?.id);
+  const routeOwnerSlug = params.username ? decodeURIComponent(params.username).toLowerCase() : null;
+  const signedInOwnerSlug = user ? slugifyUsername(user.username) : null;
+  const isDirectOwnerCanvasRoute = Boolean(params.username && params.canvasName);
+  const isOwnerRouteAuthorized = Boolean(
+    isDirectOwnerCanvasRoute
+      ? isLoggedIn && routeOwnerSlug && signedInOwnerSlug && routeOwnerSlug === signedInOwnerSlug
+      : true
+  );
+  const showUnauthorizedOwnerRoute = isDirectOwnerCanvasRoute && !isOwnerRouteAuthorized;
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
   const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile ? sidebarWidthPercent : 0;
   const showHeaderAndBars = !isCanvasLoading;
+  const currentParsedName = parseCanvasRouteName(currentCanvasName);
+  const pageItems = canvases
+    .map((canvas) => ({ id: canvas.id, parsed: parseCanvasRouteName(canvas.name) }))
+    .filter((canvas) => canvas.parsed.canvasSlug === currentParsedName.canvasSlug)
+    .sort((a, b) => {
+      const aNum = getPageNumber(a.parsed.pageSlug) ?? Number.MAX_SAFE_INTEGER;
+      const bNum = getPageNumber(b.parsed.pageSlug) ?? Number.MAX_SAFE_INTEGER;
+      return aNum - bNum;
+    })
+    .map((canvas) => ({ id: canvas.id, label: canvas.parsed.pageLabel }));
+
+  const handleCreatePage = () => {
+    if (!session?.user?.id) return;
+    const pageSlugs = canvases
+      .map((canvas) => parseCanvasRouteName(canvas.name))
+      .filter((canvas) => canvas.canvasSlug === currentParsedName.canvasSlug)
+      .map((canvas) => canvas.pageSlug);
+    const nextPage = nextPageSlug(pageSlugs);
+    void createCanvas(`${currentParsedName.canvasSlug}/${nextPage}`);
+  };
 
   useEffect(() => {
+    if (showUnauthorizedOwnerRoute) return;
     if (!session?.user?.id || initialRouteSyncedRef.current) return;
 
-    const routeName = params.canvasName ? decodeURIComponent(params.canvasName) : '';
+    const routeCanvasName = params.canvasName ? decodeURIComponent(params.canvasName) : '';
+    const routePageName = params.pageName ? decodeURIComponent(params.pageName) : '';
+    const routeName = routeCanvasName ? (routePageName ? `${routeCanvasName}/${routePageName}` : routeCanvasName) : '';
     initialRouteSyncedRef.current = true;
 
     if (!routeName) {
@@ -60,15 +93,16 @@ const Index = () => {
     }
 
     if (params.username) {
-      void selectCanvasByRoute(params.username, routeName);
+      void selectCanvasByRoute(params.username, routeCanvasName, routePageName || undefined);
     } else {
       void selectCanvasByName(routeName);
     }
-  }, [session?.user?.id, params.canvasName, params.username, selectCanvasByName, selectCanvasByRoute]);
+  }, [showUnauthorizedOwnerRoute, session?.user?.id, params.canvasName, params.pageName, params.username, selectCanvasByName, selectCanvasByRoute]);
 
   useEffect(() => {
     if (!user || !currentCanvasName) return;
-    const desired = `/${slugifyUsername(user.username)}/${encodeURIComponent(currentCanvasName)}`;
+    const parsed = parseCanvasRouteName(currentCanvasName);
+    const desired = `/${slugifyUsername(user.username)}/${encodeURIComponent(parsed.canvasSlug)}/${encodeURIComponent(parsed.pageSlug)}`;
     const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
     const desiredPath = desired.replace(/\/+$/, '') || '/';
     if (currentPath !== desiredPath) {
@@ -150,6 +184,31 @@ const Index = () => {
   }, [isCanvasLoading]);
 
   return (
+    showUnauthorizedOwnerRoute ? (
+      <div className="fixed inset-0 flex items-center justify-center bg-background">
+        <div className="w-full max-w-md border border-border bg-card p-4 space-y-3 text-center">
+          <h2 className="text-sm font-mono text-foreground">Unauthorized access</h2>
+          <p className="text-xs font-mono text-muted-foreground">
+            This owner route can only be opened by the signed-in owner account.
+          </p>
+          {!isLoggedIn ? (
+            <button
+              className="h-9 px-4 border border-foreground bg-foreground text-background text-xs font-mono"
+              onClick={signInWithGoogle}
+            >
+              Sign in as owner
+            </button>
+          ) : (
+            <button
+              className="h-9 px-4 border border-border text-xs font-mono hover:bg-accent"
+              onClick={signOut}
+            >
+              Switch account
+            </button>
+          )}
+        </div>
+      </div>
+    ) : (
     <>
       <InfiniteCanvas
         leftOffsetPercent={canvasLeftOffsetPercent}
@@ -163,6 +222,13 @@ const Index = () => {
           onSignOut={signOut}
           currentCanvasId={currentCanvasId}
           currentCanvasName={currentCanvasName}
+          currentCanvasLabel={currentParsedName.canvasLabel}
+          currentPageLabel={currentParsedName.pageLabel}
+          pageItems={pageItems}
+          onSelectPage={(id) => {
+            void selectCanvas(id);
+          }}
+          onCreatePage={handleCreatePage}
           leftOffsetPercent={canvasLeftOffsetPercent}
           showSidebarToggle={isLoggedIn}
           isSidebarOpen={isSidebarOpen}
@@ -212,6 +278,7 @@ const Index = () => {
         )
       )}
     </>
+    )
   );
 };
 

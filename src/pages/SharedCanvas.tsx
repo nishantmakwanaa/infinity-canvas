@@ -8,7 +8,7 @@ import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 export default function SharedCanvas() {
   useThemeTime();
-  const { token, username, canvasName } = useParams<{ token?: string; username?: string; canvasName?: string }>();
+  const { token, username, canvasName, pageName } = useParams<{ token?: string; username?: string; canvasName?: string; pageName?: string }>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const { zoom, setZoom, setPan } = useCanvasStore();
@@ -25,31 +25,51 @@ export default function SharedCanvas() {
           .single();
         canvasId = shared?.canvas_id || null;
       } else if (canvasName && username) {
-        const decodedName = decodeURIComponent(canvasName);
+        const decodedCanvasName = decodeURIComponent(canvasName);
+        const decodedPageName = pageName ? decodeURIComponent(pageName) : null;
         const normalizedOwner = decodeURIComponent(username).toLowerCase();
-        const { data: resolvedByRoute } = await supabase.rpc('resolve_shared_canvas', {
+        let { data: resolvedByRoute } = await supabase.rpc('resolve_shared_canvas', {
           p_owner_username: normalizedOwner,
-          p_canvas_name: decodedName,
+          p_canvas_name: decodedCanvasName,
+          p_page_name: decodedPageName,
         });
+        if (!resolvedByRoute) {
+          const fallback = await supabase.rpc('resolve_shared_canvas', {
+            p_owner_username: normalizedOwner,
+            p_canvas_name: decodedCanvasName,
+          });
+          resolvedByRoute = fallback.data;
+        }
 
         if (resolvedByRoute) {
           canvasId = resolvedByRoute as string;
         } else {
-          const { data: resolvedByUserCanvas } = await supabase.rpc('resolve_user_canvas', {
+          let { data: resolvedByUserCanvas } = await supabase.rpc('resolve_user_canvas', {
             p_owner_username: normalizedOwner,
-            p_canvas_name: decodedName,
+            p_canvas_name: decodedCanvasName,
+            p_page_name: decodedPageName,
           });
+          if (!resolvedByUserCanvas) {
+            const fallback = await supabase.rpc('resolve_user_canvas', {
+              p_owner_username: normalizedOwner,
+              p_canvas_name: decodedCanvasName,
+            });
+            resolvedByUserCanvas = fallback.data;
+          }
 
           if (resolvedByUserCanvas) {
             canvasId = resolvedByUserCanvas as string;
           } else {
-          const { data: sharedByRoute } = await supabase
-            .from('shared_canvases')
-            .select('canvas_id')
-            .eq('owner_username', normalizedOwner)
-            .eq('canvas_name', decodedName)
-            .maybeSingle();
-          canvasId = sharedByRoute?.canvas_id || null;
+            let sharedQuery = supabase
+              .from('shared_canvases')
+              .select('canvas_id')
+              .eq('owner_username', normalizedOwner)
+              .eq('canvas_name', decodedCanvasName);
+            if (decodedPageName) {
+              sharedQuery = sharedQuery.eq('page_name', decodedPageName);
+            }
+            const { data: sharedByRoute } = await sharedQuery.maybeSingle();
+            canvasId = sharedByRoute?.canvas_id || null;
           }
         }
       }
@@ -81,7 +101,7 @@ export default function SharedCanvas() {
     };
 
     load();
-  }, [token, username, canvasName]);
+  }, [token, username, canvasName, pageName]);
 
   if (loading) {
     return (

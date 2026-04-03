@@ -1,4 +1,4 @@
-import { useCanvasStore, CanvasBlock } from '@/store/canvasStore';
+import { useCanvasStore, CanvasBlock, FONT_MAP } from '@/store/canvasStore';
 import { ExternalLink, Globe } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
@@ -41,6 +41,30 @@ function toEmbedUrl(url: string) {
   return '';
 }
 
+function getLinkAutoSize(url: string) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+
+    const isYoutube = host.includes('youtube.com') || host.includes('youtu.be');
+    const isVimeo = host.includes('vimeo.com');
+    const isTwitter = host.includes('twitter.com') || host.includes('x.com');
+    const isInstagram = host.includes('instagram.com');
+    const isImage = /\.(png|jpe?g|webp|avif|svg|gif)(\?|$)/i.test(path);
+    const isVideo = /\.(mp4|webm|ogg|mov|m3u8)(\?|$)/i.test(path);
+
+    if (isYoutube || isVimeo) return { width: 560, height: 380 };
+    if (isTwitter) return { width: 560, height: 720 };
+    if (isInstagram) return { width: 460, height: 760 };
+    if (isImage) return { width: 500, height: 420 };
+    if (isVideo) return { width: 560, height: 400 };
+    return { width: 480, height: 360 };
+  } catch {
+    return null;
+  }
+}
+
 export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
   const setPan = useCanvasStore((s) => s.setPan);
@@ -52,6 +76,22 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
   const [fetchingTitle, setFetchingTitle] = useState(false);
   const [showWebsiteDialog, setShowWebsiteDialog] = useState(false);
   const lastFetchedUrl = useRef('');
+  const lastAutoSizeUrl = useRef('');
+  const textFont = FONT_MAP[block.fontFamily || 'mono'];
+
+  useEffect(() => {
+    if (readOnly) return;
+    const url = normalizedUrl;
+    if (!url || url === 'https://') return;
+    if (url === lastAutoSizeUrl.current) return;
+    const nextSize = getLinkAutoSize(url);
+    if (!nextSize) return;
+    lastAutoSizeUrl.current = url;
+
+    if (block.width !== nextSize.width || block.height !== nextSize.height) {
+      updateBlock(block.id, { width: nextSize.width, height: nextSize.height });
+    }
+  }, [normalizedUrl, readOnly, block.id, block.width, block.height, updateBlock]);
 
   // Auto-fetch title when URL changes
   useEffect(() => {
@@ -96,10 +136,10 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
 
   if (readOnly) {
     return (
-      <div className="p-3 h-full flex flex-col gap-2">
+      <div className="p-3 h-full flex flex-col gap-2" style={{ fontFamily: textFont }}>
         <div className="flex items-center gap-2">
           {domain && <img src={getFaviconUrl(normalizedUrl)} alt="" className="w-4 h-4" />}
-          <span className="text-sm font-mono text-foreground truncate">{block.content || domain || 'Link'}</span>
+          <span className="text-sm font-mono text-foreground truncate" style={{ fontFamily: textFont }}>{block.content || domain || 'Link'}</span>
         </div>
         {normalizedUrl && domain && (
           <div
@@ -120,16 +160,18 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
   }
 
   return (
-    <div className="p-3 h-full flex flex-col gap-2">
+    <div className="p-3 h-full flex flex-col gap-2" style={{ fontFamily: textFont }}>
       <div className="flex items-center gap-2">
         <input
           className="flex-1 bg-transparent text-xs font-mono text-muted-foreground focus:outline-none placeholder:text-muted-foreground border-b border-border pb-1"
+          style={{ fontFamily: textFont }}
           placeholder="Paste URL..."
           value={block.url || ''}
           ref={inputRef}
           onChange={(e) => {
             updateBlock(block.id, { url: e.target.value, content: '' });
             lastFetchedUrl.current = '';
+            lastAutoSizeUrl.current = '';
           }}
         />
         {normalizedUrl && domain && (
@@ -140,7 +182,7 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
       </div>
       {fetchingTitle && <span className="text-[10px] font-mono text-muted-foreground">Fetching title...</span>}
       {block.content && (
-        <span className="text-sm font-mono text-foreground truncate">{block.content}</span>
+        <span className="text-sm font-mono text-foreground truncate" style={{ fontFamily: textFont }}>{block.content}</span>
       )}
       {normalizedUrl && domain && (
         <div
@@ -176,6 +218,7 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
           <div className="space-y-2">
             <input
               className="w-full h-8 px-2 bg-transparent text-xs font-mono border border-border focus:outline-none"
+              style={{ fontFamily: textFont }}
               value={block.url || ''}
               onChange={(e) => updateBlock(block.id, { url: e.target.value, content: '' })}
             />

@@ -2,6 +2,7 @@ import { Pencil, Trash2, X, Check } from 'lucide-react';
 import type { CanvasMeta } from '@/hooks/useCanvasSync';
 import { useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { getPageNumber, parseCanvasRouteName } from '@/lib/canvasNaming';
 
 interface CanvasSidebarProps {
   loggedInUserId: string | null;
@@ -26,24 +27,78 @@ export function CanvasSidebar({
   setWidthPercent,
   isMobile = false,
 }: CanvasSidebarProps) {
-  if (!loggedInUserId) return null;
-
   const [deleteMode, setDeleteMode] = useState(false);
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [selectedGroups, setSelectedGroups] = useState<Record<string, boolean>>({});
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
-  const selectedIds = useMemo(
-    () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
-    [selected]
+  const groupedCanvases = useMemo(() => {
+    const bySlug = new Map<string, {
+      canvasSlug: string;
+      canvasLabel: string;
+      pages: Array<{ id: string; pageSlug: string; pageLabel: string; updatedAt: string }>;
+      latestUpdatedAt: string;
+    }>();
+
+    canvases.forEach((canvas) => {
+      const parsed = parseCanvasRouteName(canvas.name);
+      const existing = bySlug.get(parsed.canvasSlug);
+      const page = { id: canvas.id, pageSlug: parsed.pageSlug, pageLabel: parsed.pageLabel, updatedAt: canvas.updated_at };
+
+      if (!existing) {
+        bySlug.set(parsed.canvasSlug, {
+          canvasSlug: parsed.canvasSlug,
+          canvasLabel: parsed.canvasLabel,
+          pages: [page],
+          latestUpdatedAt: canvas.updated_at,
+        });
+        return;
+      }
+
+      existing.pages.push(page);
+      if (canvas.updated_at > existing.latestUpdatedAt) {
+        existing.latestUpdatedAt = canvas.updated_at;
+      }
+    });
+
+    return Array.from(bySlug.values())
+      .map((group) => ({
+        ...group,
+        pages: group.pages.sort((a, b) => {
+          const aNum = getPageNumber(a.pageSlug) ?? Number.MAX_SAFE_INTEGER;
+          const bNum = getPageNumber(b.pageSlug) ?? Number.MAX_SAFE_INTEGER;
+          return aNum - bNum;
+        }),
+      }))
+      .sort((a, b) => b.latestUpdatedAt.localeCompare(a.latestUpdatedAt));
+  }, [canvases]);
+
+  const currentCanvasGroupSlug = useMemo(() => {
+    if (!currentCanvasId) return null;
+    const currentCanvas = canvases.find((canvas) => canvas.id === currentCanvasId);
+    if (!currentCanvas) return null;
+    return parseCanvasRouteName(currentCanvas.name).canvasSlug;
+  }, [canvases, currentCanvasId]);
+
+  const selectedGroupSlugs = useMemo(
+    () => Object.entries(selectedGroups).filter(([, v]) => v).map(([k]) => k),
+    [selectedGroups]
   );
 
-  const toggleSelected = (id: string) => {
-    setSelected((prev) => ({ ...prev, [id]: !prev[id] }));
+  const selectedIds = useMemo(() => {
+    if (!selectedGroupSlugs.length) return [] as string[];
+    const selectedSet = new Set(selectedGroupSlugs);
+    return groupedCanvases
+      .filter((group) => selectedSet.has(group.canvasSlug))
+      .flatMap((group) => group.pages.map((page) => page.id));
+  }, [groupedCanvases, selectedGroupSlugs]);
+
+  const toggleSelectedGroup = (canvasSlug: string) => {
+    setSelectedGroups((prev) => ({ ...prev, [canvasSlug]: !prev[canvasSlug] }));
   };
 
   const exitDeleteMode = () => {
     setDeleteMode(false);
-    setSelected({});
+    setSelectedGroups({});
   };
 
   const startResize = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -61,6 +116,8 @@ export function CanvasSidebar({
     window.addEventListener('mouseup', onUp);
   };
 
+  if (!loggedInUserId) return null;
+
   return (
     <aside
       className="fixed left-0 top-0 bottom-0 z-[60] border-r border-border bg-card/95 backdrop-blur-sm"
@@ -74,7 +131,12 @@ export function CanvasSidebar({
         />
       )}
       <div className="h-14 px-3 border-b border-border flex items-center justify-between">
-        <span className="text-xs font-mono text-foreground">Your Canvases</span>
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 bg-foreground flex items-center justify-center">
+            <span className="text-background text-[10px] font-bold font-mono">C</span>
+          </div>
+          <span className="text-xs font-mono font-semibold tracking-tight text-foreground">CNVS</span>
+        </div>
         <button
           className="w-7 h-7 border border-border hover:bg-accent flex items-center justify-center"
           title="Create new canvas"
@@ -84,38 +146,40 @@ export function CanvasSidebar({
         </button>
       </div>
       <div className="p-2 space-y-1 overflow-auto h-[calc(100%-56px-52px)]">
-        {canvases.length === 0 && (
+        {groupedCanvases.length === 0 && (
           <div className="text-[11px] font-mono text-muted-foreground px-1 py-2">No canvases yet</div>
         )}
-        {canvases.map((canvas) => (
-          <div
-            key={canvas.id}
-            className={`w-full border text-xs font-mono transition-colors ${
-              currentCanvasId === canvas.id
-                ? 'bg-foreground text-background border-foreground'
-                : 'bg-card border-border hover:bg-accent'
-            }`}
-          >
-            <button
-              className="w-full text-left px-2 py-2"
-              onClick={() => (deleteMode ? toggleSelected(canvas.id) : onSelectCanvas(canvas.id))}
-            >
-              <div className="flex items-start gap-2">
-                {deleteMode && (
-                  <div className={`mt-0.5 w-4 h-4 border flex items-center justify-center ${selected[canvas.id] ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
-                    {selected[canvas.id] ? <Check size={12} /> : null}
-                  </div>
-                )}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate">{canvas.name || 'Untitled Canvas'}</div>
-                  <div className="text-[10px] opacity-70 mt-0.5">
-                    {new Date(canvas.updated_at).toLocaleString()}
-                  </div>
+        {groupedCanvases.map((group) => {
+          const isCurrentGroup = group.canvasSlug === currentCanvasGroupSlug;
+          const isSelectedGroup = Boolean(selectedGroups[group.canvasSlug]);
+          const defaultPageId = group.pages[0]?.id;
+
+          return (
+            <div key={group.canvasSlug} className="border border-border bg-card">
+              <button
+                className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
+                  isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
+                }`}
+                onClick={() => {
+                  if (deleteMode) {
+                    toggleSelectedGroup(group.canvasSlug);
+                    return;
+                  }
+                  if (defaultPageId) onSelectCanvas(defaultPageId);
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  {deleteMode && (
+                    <div className={`w-4 h-4 border flex items-center justify-center ${isSelectedGroup ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
+                      {isSelectedGroup ? <Check size={12} /> : null}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
                 </div>
-              </div>
-            </button>
-          </div>
-        ))}
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       {/* Bottom actions */}
@@ -151,7 +215,7 @@ export function CanvasSidebar({
         )}
 
         <span className="ml-auto min-w-0 max-w-[42%] truncate text-right text-[10px] font-mono text-muted-foreground">
-          {deleteMode ? 'Select canvases to delete' : `${canvases.length} total`}
+          {deleteMode ? 'Select canvases to delete' : `${groupedCanvases.length} total`}
         </span>
       </div>
 
@@ -160,16 +224,16 @@ export function CanvasSidebar({
           <DialogHeader>
             <DialogTitle className="text-sm font-mono">Delete selected canvases?</DialogTitle>
             <DialogDescription className="text-xs font-mono">
-              This action cannot be undone. {selectedIds.length} canvas{selectedIds.length > 1 ? 'es' : ''} will be removed.
+              This action cannot be undone. {selectedGroupSlugs.length} main canvas{selectedGroupSlugs.length > 1 ? 'es' : ''} ({selectedIds.length} pages) will be removed.
             </DialogDescription>
           </DialogHeader>
 
           <div className="max-h-44 overflow-auto border border-border">
-            {canvases
-              .filter((canvas) => selected[canvas.id])
-              .map((canvas) => (
-                <div key={canvas.id} className="px-2 py-1.5 text-xs font-mono border-b border-border last:border-b-0">
-                  {canvas.name || 'Untitled Canvas'}
+            {groupedCanvases
+              .filter((group) => selectedGroups[group.canvasSlug])
+              .map((group) => (
+                <div key={group.canvasSlug} className="px-2 py-1.5 text-xs font-mono border-b border-border last:border-b-0">
+                  {group.canvasLabel} ({group.pages.length} pages)
                 </div>
               ))}
           </div>

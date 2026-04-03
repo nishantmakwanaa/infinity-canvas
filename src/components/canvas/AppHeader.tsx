@@ -1,4 +1,4 @@
-import { LogOut, Share2, User as UserIcon, Download, Puzzle, MoreVertical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LogOut, User as UserIcon, Download, MoreVertical, PanelLeftClose, PanelLeftOpen, Share2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -7,6 +7,8 @@ import { AppMenu } from './AppMenu';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { FeedbackDialog } from './FeedbackDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { parseCanvasRouteName } from '@/lib/canvasNaming';
 
 interface AuthUser {
   id: string;
@@ -26,6 +28,15 @@ interface AppHeaderProps {
   showSidebarToggle?: boolean;
   isSidebarOpen?: boolean;
   onToggleSidebar?: () => void;
+  currentCanvasLabel?: string | null;
+  currentPageLabel?: string | null;
+  pageItems?: { id: string; label: string }[];
+  onSelectPage?: (canvasId: string) => void;
+  onCreatePage?: () => void;
+}
+
+function slugifyUsername(value: string) {
+  return value.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
 export function AppHeader({
@@ -39,6 +50,11 @@ export function AppHeader({
   showSidebarToggle = false,
   isSidebarOpen = true,
   onToggleSidebar,
+  currentCanvasLabel,
+  currentPageLabel,
+  pageItems = [],
+  onSelectPage,
+  onCreatePage,
 }: AppHeaderProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -46,12 +62,17 @@ export function AppHeader({
   const [showExport, setShowExport] = useState(false);
   const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
   const [showFeedbackDialog, setShowFeedbackDialog] = useState(false);
+  const [showQrDialog, setShowQrDialog] = useState(false);
+  const [showPageMenu, setShowPageMenu] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
   const isMobile = useIsMobile();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
+  const headerCanvasName = (currentCanvasLabel || '').trim() || 'Untitled Canvas';
+  const headerPageName = (currentPageLabel || '').trim() || 'Page 1';
 
-  const handleShare = async () => {
-    if (!user) return;
+  const getShareUrl = async () => {
+    if (!user) return null;
     setSharing(true);
     try {
       const canvas = currentCanvasId
@@ -64,7 +85,10 @@ export function AppHeader({
           .limit(1)
           .single()).data;
 
-      if (!canvas) { toast.error('No canvas found'); setSharing(false); return; }
+      if (!canvas) {
+        toast.error('No canvas found');
+        return null;
+      }
 
       let routeCanvasName = (currentCanvasName || '').trim();
       if (!routeCanvasName) {
@@ -75,30 +99,49 @@ export function AppHeader({
           .maybeSingle();
         routeCanvasName = ((canvasRow as any)?.name || '').trim();
       }
-      const routeOwner = user.username.toLowerCase();
+      const routeOwner = slugifyUsername(user.username);
+      const parsed = parseCanvasRouteName(routeCanvasName);
 
-      // Keep Supabase shared metadata in sync with routing architecture.
       const { data: upsertedShare } = await supabase
         .from('shared_canvases')
         .upsert(
           {
             canvas_id: canvas.id,
             owner_username: routeOwner,
-            canvas_name: routeCanvasName,
+            canvas_name: parsed.canvasSlug,
+            page_name: parsed.pageSlug,
           } as any,
           { onConflict: 'canvas_id' }
         )
-        .select('share_token,owner_username,canvas_name')
+        .select('share_token,owner_username,canvas_name,page_name')
         .single();
 
       const shareToken = (upsertedShare as any)?.share_token;
-      const shareUrl = routeOwner && routeCanvasName
-        ? `${window.location.origin}/${encodeURIComponent(routeOwner)}/view/${encodeURIComponent(routeCanvasName)}`
+      const nextShareUrl = routeOwner && parsed.canvasSlug
+        ? `${window.location.origin}/${encodeURIComponent(routeOwner)}/view/${encodeURIComponent(parsed.canvasSlug)}/${encodeURIComponent(parsed.pageSlug)}`
         : `${window.location.origin}/view/${shareToken}`;
-      await navigator.clipboard.writeText(shareUrl);
-      toast.success('Share link copied!');
-    } catch { toast.error('Failed to share'); }
-    setSharing(false);
+
+      setShareUrl(nextShareUrl);
+      return nextShareUrl;
+    } catch {
+      toast.error('Failed to share');
+      return null;
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    const nextShareUrl = await getShareUrl();
+    if (!nextShareUrl) return;
+    await navigator.clipboard.writeText(nextShareUrl);
+    toast.success('Share link copied!');
+  };
+
+  const handleOpenQrShare = async () => {
+    const nextShareUrl = await getShareUrl();
+    if (!nextShareUrl) return;
+    setShowQrDialog(true);
   };
 
   useEffect(() => {
@@ -119,7 +162,7 @@ export function AppHeader({
   return (
     <>
       <header
-        className="fixed top-0 right-0 z-50 h-14 border-b border-border bg-card/95 backdrop-blur-sm flex items-center justify-between px-4"
+        className="fixed top-0 right-0 z-50 h-14 flex items-center justify-between px-4"
         style={{ left: `${leftOffsetPercent}%` }}
       >
         <div className="flex items-center gap-2">
@@ -132,10 +175,47 @@ export function AppHeader({
               {isSidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
             </button>
           )}
-          <div className="w-7 h-7 bg-foreground flex items-center justify-center">
-            <span className="text-background text-xs font-bold font-mono">C</span>
+          <span className="max-w-[40vw] truncate text-sm font-semibold tracking-tight text-foreground font-mono">
+            {headerCanvasName}
+          </span>
+          <div className="relative">
+            <button
+              className="h-7 px-2 border border-border bg-card text-[11px] font-mono hover:bg-accent"
+              onClick={() => setShowPageMenu((prev) => !prev)}
+              title="Select page"
+            >
+              / {headerPageName.toLowerCase()}
+            </button>
+            {showPageMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowPageMenu(false)} />
+                <div className="absolute left-0 top-9 z-50 w-44 border border-border bg-card p-1 shadow-lg">
+                  <button
+                    className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
+                    onClick={() => {
+                      setShowPageMenu(false);
+                      onCreatePage?.();
+                    }}
+                  >
+                    + Add new page
+                  </button>
+                  <div className="my-1 h-px bg-border" />
+                  {pageItems.map((item) => (
+                    <button
+                      key={item.id}
+                      className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
+                      onClick={() => {
+                        setShowPageMenu(false);
+                        onSelectPage?.(item.id);
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
-          <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
           <div className="relative" ref={menuPanelRef}>
             <button ref={menuButtonRef} onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
               <MoreVertical size={14} />
@@ -149,23 +229,15 @@ export function AppHeader({
                   isMobile={isMobile}
                   onOpenShortcuts={() => setShowShortcutsDialog(true)}
                   onOpenFeedback={() => setShowFeedbackDialog(true)}
+                  onOpenExtension={() => toast.info('Browser extension coming soon!')}
                 />
               </>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2">
-        {/* Extension button */}
-        <button
-          onClick={() => toast.info('Browser extension coming soon!')}
-          className="toolbar-btn"
-          title="Add extension"
-        >
-          <Puzzle size={14} />
-        </button>
-
         {user ? (
-          <button onClick={handleShare} disabled={sharing} className="toolbar-btn" title="Share canvas">
+          <button onClick={handleOpenQrShare} disabled={sharing} className="toolbar-btn" title="Share canvas">
             <Share2 size={14} />
           </button>
         ) : (
@@ -216,6 +288,31 @@ export function AppHeader({
 
       {showShortcutsDialog && <KeyboardShortcutsDialog onClose={() => setShowShortcutsDialog(false)} />}
       {showFeedbackDialog && <FeedbackDialog onClose={() => setShowFeedbackDialog(false)} />}
+      <Dialog open={showQrDialog} onOpenChange={setShowQrDialog}>
+        <DialogContent className="max-w-sm" data-no-translate="true">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-mono">Share Canvas</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="border border-border p-2 bg-card flex items-center justify-center">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`}
+                alt="Canvas share QR code"
+                className="w-48 h-48"
+              />
+            </div>
+            <div className="text-[11px] font-mono text-muted-foreground break-all border border-border p-2">
+              {shareUrl}
+            </div>
+            <button
+              className="h-9 w-full border border-border text-xs font-mono hover:bg-accent"
+              onClick={handleCopyShareLink}
+            >
+              Copy link
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

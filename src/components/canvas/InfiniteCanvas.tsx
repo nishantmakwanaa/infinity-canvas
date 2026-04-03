@@ -103,6 +103,10 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     return false;
   };
 
+  const isTouchCapableDevice = () => {
+    return navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+  };
+
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       if (canNativeScrollFromTarget(e.target, e.deltaX, e.deltaY)) {
@@ -110,8 +114,8 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       }
       e.preventDefault();
       const state = useCanvasStore.getState();
-      const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-      if (e.ctrlKey || e.metaKey || !isTouchDevice) {
+      const canPinchZoom = isTouchCapableDevice() && (e.ctrlKey || e.metaKey);
+      if (canPinchZoom) {
         const delta = -e.deltaY * 0.002;
         state.setZoom(state.zoom * (1 + delta));
       } else {

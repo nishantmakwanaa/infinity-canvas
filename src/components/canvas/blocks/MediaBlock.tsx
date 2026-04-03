@@ -1,6 +1,6 @@
 import { useCanvasStore, CanvasBlock } from '@/store/canvasStore';
 import { ImageIcon, Play, Pause, Volume2, VolumeX } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 function normalizeUrl(raw: string) {
   if (!raw) return '';
@@ -38,12 +38,41 @@ function toEmbedUrl(url: string) {
   return '';
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getMediaAutoSize(url: string) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+
+    const isYoutube = host.includes('youtube.com') || host.includes('youtu.be');
+    const isVimeo = host.includes('vimeo.com');
+    const isTwitter = host.includes('twitter.com') || host.includes('x.com');
+    const isInstagram = host.includes('instagram.com');
+    const isImageLike = /\.(png|jpe?g|webp|avif|svg|gif)(\?|$)/i.test(path);
+    const isVideoLike = /\.(mp4|webm|ogg|mov|m3u8)(\?|$)/i.test(path);
+
+    if (isYoutube || isVimeo) return { width: 620, height: 390 };
+    if (isTwitter) return { width: 580, height: 760 };
+    if (isInstagram) return { width: 500, height: 820 };
+    if (isImageLike) return { width: 520, height: 420 };
+    if (isVideoLike) return { width: 620, height: 430 };
+    return { width: 560, height: 420 };
+  } catch {
+    return null;
+  }
+}
+
 export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(true);
   const [muted, setMuted] = useState(true);
+  const lastAutoSizeUrl = useRef('');
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -74,6 +103,20 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   const isVid = hasUrl && isVideo(normalizedUrl);
   const isGifUrl = hasUrl && isGif(normalizedUrl);
 
+  useEffect(() => {
+    if (readOnly) return;
+    const url = normalizedUrl;
+    if (!url || url === 'https://') return;
+    if (url === lastAutoSizeUrl.current) return;
+    const nextSize = getMediaAutoSize(url);
+    if (!nextSize) return;
+    lastAutoSizeUrl.current = url;
+
+    if (block.width !== nextSize.width || block.height !== nextSize.height) {
+      updateBlock(block.id, { width: nextSize.width, height: nextSize.height });
+    }
+  }, [normalizedUrl, readOnly, block.id, block.width, block.height, updateBlock]);
+
   return (
     <div className="p-2 h-full flex flex-col gap-1.5 min-h-0">
       {!readOnly && (
@@ -82,7 +125,10 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
             className="flex-1 bg-transparent text-[10px] font-mono text-muted-foreground focus:outline-none placeholder:text-muted-foreground border-b border-border pb-1"
             placeholder="Paste media URL..."
             value={block.url || ''}
-            onChange={(e) => updateBlock(block.id, { url: e.target.value })}
+            onChange={(e) => {
+              lastAutoSizeUrl.current = '';
+              updateBlock(block.id, { url: e.target.value });
+            }}
           />
           <input ref={fileInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleFileUpload} />
         </div>
@@ -109,6 +155,15 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
               autoPlay
               muted={muted}
               playsInline
+              onLoadedMetadata={(e) => {
+                if (readOnly) return;
+                const v = e.currentTarget;
+                if (!v.videoWidth || !v.videoHeight) return;
+                const ratio = v.videoWidth / v.videoHeight;
+                const newW = clamp(v.videoWidth, 280, 760);
+                const newH = clamp(newW / ratio + 28, 180, 760);
+                updateBlock(block.id, { width: newW, height: newH });
+              }}
             />
             <div className="absolute bottom-1 right-1 flex gap-1">
               <button onClick={togglePlay} className="w-5 h-5 bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors">

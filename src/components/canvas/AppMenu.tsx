@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, Globe, Keyboard, BookOpen, MessageSquare, ChevronRight, Sun, Moon, Monitor } from 'lucide-react';
+import { Download, Globe, Keyboard, BookOpen, MessageSquare, ChevronRight, Sun, Moon, Monitor, Puzzle } from 'lucide-react';
 import { getThemePreference, setThemePreference, type ThemePreference } from '@/hooks/useThemeTime';
 import { exportCanvasAsCnvs, exportCanvasAsPng, exportCanvasAsSvg, importCanvasFromCnvsFile } from '@/lib/export';
 import { APP_LANGUAGES, getAppLanguage, setAppLanguage } from '@/lib/i18n';
@@ -11,9 +11,10 @@ interface AppMenuProps {
   isMobile?: boolean;
   onOpenShortcuts: () => void;
   onOpenFeedback: () => void;
+  onOpenExtension: () => void;
 }
 
-export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts, onOpenFeedback }: AppMenuProps) {
+export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts, onOpenFeedback, onOpenExtension }: AppMenuProps) {
   const navigate = useNavigate();
   const [showExport, setShowExport] = useState(false);
   const [showLanguage, setShowLanguage] = useState(false);
@@ -133,6 +134,16 @@ export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts
         </div>
 
         <div className="h-px bg-border my-1" />
+
+        <button
+          onClick={() => {
+            onClose();
+            onOpenExtension();
+          }}
+          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+        >
+          <Puzzle size={12} /> Add extension
+        </button>
 
         <button
           onClick={() => importInputRef.current?.click()}

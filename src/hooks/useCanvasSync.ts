@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useCanvasStore, CanvasBlock, DrawingElement } from '@/store/canvasStore';
 import type { Session } from '@supabase/supabase-js';
+import { createDefaultCanvasRouteName } from '@/lib/canvasNaming';
 
 export interface CanvasMeta {
   id: string;
@@ -17,14 +18,6 @@ interface LocalCanvasSnapshot {
   drawings: DrawingElement[];
   pan: { x: number; y: number };
   zoom: number;
-}
-
-function formatDayTimeName(date = new Date()) {
-  const days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  const day = days[date.getDay()];
-  const hh = String(date.getHours()).padStart(2, '0');
-  const mm = String(date.getMinutes()).padStart(2, '0');
-  return `${day}-${hh}-${mm}`;
 }
 
 function isLegacyUsernameCanvasName(name: string | null | undefined) {
@@ -174,7 +167,7 @@ export function useCanvasSync(session: Session | null) {
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
 
     if (hasGuestEdits && guestSnapshot) {
-      const canvasName = formatDayTimeName();
+      const canvasName = createDefaultCanvasRouteName();
       const { data: importedCanvas } = await supabase
         .from('canvases')
         .insert({
@@ -211,7 +204,7 @@ export function useCanvasSync(session: Session | null) {
       await loadCanvasById(first.id, userId);
       // Fix old default canvas name once, so URL stays in the new pattern.
       if (isLegacyUsernameCanvasName(first.name)) {
-        const newName = formatDayTimeName();
+        const newName = createDefaultCanvasRouteName();
         const { error } = await supabase
           .from('canvases')
           .update({ name: newName })
@@ -222,7 +215,7 @@ export function useCanvasSync(session: Session | null) {
         }
       }
     } else {
-      const canvasName = formatDayTimeName();
+      const canvasName = createDefaultCanvasRouteName();
       const { data: newCanvas } = await supabase
         .from('canvases')
         .insert({ user_id: userId, blocks: [], pan_x: 0, pan_y: 0, zoom: 1, name: canvasName })
@@ -247,7 +240,7 @@ export function useCanvasSync(session: Session | null) {
     isLoadingRef.current = true;
     setIsCanvasLoading(true);
 
-    const canvasName = name?.trim() || formatDayTimeName();
+    const canvasName = name?.trim() || createDefaultCanvasRouteName();
     const { data: newCanvas } = await supabase
       .from('canvases')
       .insert({ user_id: session.user.id, blocks: [], drawings: [], pan_x: 0, pan_y: 0, zoom: 1, name: canvasName })
@@ -297,12 +290,21 @@ export function useCanvasSync(session: Session | null) {
     if (data?.id) await loadCanvasById(data.id, session.user.id);
   }, [loadCanvasById, session?.user?.id]);
 
-  const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string) => {
+  const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string, pageName?: string) => {
     const requestedSeq = loadSeqRef.current;
-    const { data, error } = await supabase.rpc('resolve_user_canvas', {
+    let { data, error } = await supabase.rpc('resolve_user_canvas', {
       p_owner_username: ownerUsername,
       p_canvas_name: name,
+      p_page_name: pageName || null,
     });
+    if (error) {
+      const fallback = await supabase.rpc('resolve_user_canvas', {
+        p_owner_username: ownerUsername,
+        p_canvas_name: name,
+      });
+      data = fallback.data;
+      error = fallback.error;
+    }
     if (requestedSeq !== loadSeqRef.current) return;
     if (!error && data) {
       await loadCanvasById(data as string, session?.user?.id);
