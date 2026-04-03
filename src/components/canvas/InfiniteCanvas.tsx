@@ -1,16 +1,20 @@
 import React, { useRef, useCallback, useEffect } from 'react';
 import { useCanvasStore } from '@/store/canvasStore';
 import { CanvasBlockComponent } from './CanvasBlock';
+import { DrawingLayer } from './DrawingLayer';
 
 interface Props {
   readOnly?: boolean;
 }
 
+const DRAWING_TOOLS = ['pencil', 'eraser', 'text', 'shape', 'line', 'arrow'];
+
 export function InfiniteCanvas({ readOnly }: Props) {
-  const { blocks, pan, zoom, setPan, setZoom, selectBlock } = useCanvasStore();
+  const { blocks, pan, zoom, setPan, setZoom, selectBlock, activeTool } = useCanvasStore();
   const containerRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
+  const isDrawing = DRAWING_TOOLS.includes(activeTool);
 
   const handleWheel = useCallback(
     (e: WheelEvent) => {
@@ -33,6 +37,7 @@ export function InfiniteCanvas({ readOnly }: Props) {
   }, [handleWheel]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (isDrawing) return;
     if (e.target === containerRef.current || (e.target as HTMLElement).dataset.canvas) {
       isPanning.current = true;
       lastMouse.current = { x: e.clientX, y: e.clientY };
@@ -69,15 +74,16 @@ export function InfiniteCanvas({ readOnly }: Props) {
     >
       <div
         data-canvas="true"
+        data-canvas-content="true"
         className="absolute inset-0 origin-top-left"
-        style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-        }}
+        style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
       >
         {blocks.map((block) => (
           <CanvasBlockComponent key={block.id} block={block} readOnly={readOnly} />
         ))}
       </div>
+
+      <DrawingLayer readOnly={readOnly} />
     </div>
   );
 }
