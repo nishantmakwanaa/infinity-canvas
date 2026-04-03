@@ -41,6 +41,13 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   const containerRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
   const isTouchPanning = useRef(false);
+  const isTouchPinching = useRef(false);
+  const pinchRef = useRef({
+    worldX: 0,
+    worldY: 0,
+    startZoom: 1,
+    startDistance: 0,
+  });
   const lastMouse = useRef({ x: 0, y: 0 });
   const lastTouch = useRef({ x: 0, y: 0 });
   const isDrawing = DRAWING_TOOLS.includes(activeTool);
@@ -53,11 +60,58 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     blockId: null,
   });
 
+  const isScrollableElement = (el: Element) => {
+    const node = el as HTMLElement;
+    const style = window.getComputedStyle(node);
+    const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+    const canScrollX = /(auto|scroll|overlay)/.test(style.overflowX) && node.scrollWidth > node.clientWidth;
+    return canScrollY || canScrollX;
+  };
+
+  const hasScrollableAncestor = (startTarget: EventTarget | null) => {
+    const root = containerRef.current;
+    let node = startTarget instanceof Element ? startTarget : null;
+    while (node && root && node !== root) {
+      if (isScrollableElement(node)) return true;
+      node = node.parentElement;
+    }
+    return false;
+  };
+
+  const canNativeScrollFromTarget = (startTarget: EventTarget | null, deltaX: number, deltaY: number) => {
+    const root = containerRef.current;
+    let node = startTarget instanceof Element ? (startTarget as HTMLElement) : null;
+    while (node && root && node !== root) {
+      const style = window.getComputedStyle(node);
+      const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+      const canScrollX = /(auto|scroll|overlay)/.test(style.overflowX) && node.scrollWidth > node.clientWidth;
+
+      if (canScrollY) {
+        const canDown = node.scrollTop + node.clientHeight < node.scrollHeight - 1;
+        const canUp = node.scrollTop > 0;
+        if ((deltaY > 0 && canDown) || (deltaY < 0 && canUp)) return true;
+      }
+
+      if (canScrollX) {
+        const canRight = node.scrollLeft + node.clientWidth < node.scrollWidth - 1;
+        const canLeft = node.scrollLeft > 0;
+        if ((deltaX > 0 && canRight) || (deltaX < 0 && canLeft)) return true;
+      }
+
+      node = node.parentElement;
+    }
+    return false;
+  };
+
   const handleWheel = useCallback(
     (e: WheelEvent) => {
+      if (canNativeScrollFromTarget(e.target, e.deltaX, e.deltaY)) {
+        return;
+      }
       e.preventDefault();
       const state = useCanvasStore.getState();
-      if (e.ctrlKey || e.metaKey) {
+      const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+      if (e.ctrlKey || e.metaKey || !isTouchDevice) {
         const delta = -e.deltaY * 0.002;
         state.setZoom(state.zoom * (1 + delta));
       } else {
@@ -78,6 +132,10 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     if (loading) return;
     const target = e.target as HTMLElement;
     if (target.closest('[data-context-menu="true"]')) {
+      return;
+    }
+    // Keep current selection for context-menu workflows.
+    if (e.button !== 0) {
       return;
     }
     if (menu.open) setMenu((m) => ({ ...m, open: false }));
@@ -105,19 +163,73 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
 
   const handleTouchStart = (e: React.TouchEvent) => {
     if (loading || isDrawing) return;
+    const bounds = containerRef.current?.getBoundingClientRect();
+    const left = bounds?.left || 0;
+    const top = bounds?.top || 0;
+
+    if (e.touches.length === 2) {
+      const [t1, t2] = [e.touches[0], e.touches[1]];
+      const dx = t2.clientX - t1.clientX;
+      const dy = t2.clientY - t1.clientY;
+      const distance = Math.hypot(dx, dy);
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+      const state = useCanvasStore.getState();
+
+      isTouchPanning.current = false;
+      isTouchPinching.current = true;
+      pinchRef.current = {
+        startDistance: Math.max(1, distance),
+        startZoom: state.zoom,
+        worldX: (midX - left - state.pan.x) / state.zoom,
+        worldY: (midY - top - state.pan.y) / state.zoom,
+      };
+      e.preventDefault();
+      return;
+    }
+
     if (e.touches.length !== 1) return;
 
     const target = e.target as HTMLElement;
     if (target.closest('input, textarea, button, video, iframe, [contenteditable="true"]')) {
       return;
     }
+    if (hasScrollableAncestor(target)) {
+      return;
+    }
 
     if (menu.open) setMenu((m) => ({ ...m, open: false }));
+    isTouchPinching.current = false;
     isTouchPanning.current = true;
     lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && isTouchPinching.current) {
+      e.preventDefault();
+      const bounds = containerRef.current?.getBoundingClientRect();
+      const left = bounds?.left || 0;
+      const top = bounds?.top || 0;
+      const [t1, t2] = [e.touches[0], e.touches[1]];
+      const dx = t2.clientX - t1.clientX;
+      const dy = t2.clientY - t1.clientY;
+      const distance = Math.max(1, Math.hypot(dx, dy));
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+
+      const nextZoom = pinchRef.current.startZoom * (distance / pinchRef.current.startDistance);
+      const clampedZoom = Math.min(3, Math.max(0.1, nextZoom));
+      const nextPan = {
+        x: midX - left - pinchRef.current.worldX * clampedZoom,
+        y: midY - top - pinchRef.current.worldY * clampedZoom,
+      };
+
+      const state = useCanvasStore.getState();
+      state.setZoom(clampedZoom);
+      state.setPan(nextPan);
+      return;
+    }
+
     if (!isTouchPanning.current || e.touches.length !== 1) return;
     e.preventDefault();
     const t = e.touches[0];
@@ -130,6 +242,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
 
   const handleTouchEnd = () => {
     isTouchPanning.current = false;
+    isTouchPinching.current = false;
   };
 
   const dotOffset = {
@@ -152,6 +265,26 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     const canvasY = (e.clientY - top - state.pan.y) / state.zoom;
 
     setMenu({ open: true, x: e.clientX, y: e.clientY, canvasX, canvasY, blockId });
+  };
+
+  const getViewportCenterCanvasPoint = () => {
+    const bounds = containerRef.current?.getBoundingClientRect();
+    const left = bounds?.left || 0;
+    const top = bounds?.top || 0;
+    const width = bounds?.width || window.innerWidth;
+    const height = bounds?.height || window.innerHeight;
+    const state = useCanvasStore.getState();
+    return {
+      x: (left + width / 2 - left - state.pan.x) / state.zoom,
+      y: (top + height / 2 - top - state.pan.y) / state.zoom,
+    };
+  };
+
+  const getPasteTargetPoint = () => {
+    if (menu.open) {
+      return { x: menu.canvasX, y: menu.canvasY };
+    }
+    return getViewportCenterCanvasPoint();
   };
 
   const getEditableElement = (blockId: string) => {
@@ -202,14 +335,14 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }
   };
 
-  const insertCopiedBlocks = (payload: CopiedBlockPayload) => {
+  const insertCopiedBlocks = (payload: CopiedBlockPayload, targetPoint: { x: number; y: number }) => {
     const sourceBlocks = payload.blocks || [];
     if (!sourceBlocks.length) return;
 
     const minX = Math.min(...sourceBlocks.map((block) => block.x));
     const minY = Math.min(...sourceBlocks.map((block) => block.y));
-    const offsetX = menu.canvasX - minX;
-    const offsetY = menu.canvasY - minY;
+    const offsetX = targetPoint.x - minX;
+    const offsetY = targetPoint.y - minY;
 
     const clonedBlocks = sourceBlocks.map((source) => {
       const clonedId = genId();
@@ -232,17 +365,18 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   };
 
   const handlePaste = async () => {
+    const targetPoint = getPasteTargetPoint();
     const current = useCanvasStore.getState();
     const selected = current.blocks.filter((block) => current.selectedBlockIds.includes(block.id));
     if (selected.length) {
-      insertCopiedBlocks({ type: 'cnvs-blocks', blocks: selected });
+      insertCopiedBlocks({ type: 'cnvs-blocks', blocks: selected }, targetPoint);
       toast.success('Canvas component pasted');
       return;
     }
 
     const copiedBlocks = readCopiedCanvasBlocks();
     if (copiedBlocks) {
-      insertCopiedBlocks(copiedBlocks);
+      insertCopiedBlocks(copiedBlocks, targetPoint);
       toast.success('Canvas component pasted');
       return;
     }
@@ -268,7 +402,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
         };
         if (nextPayload.blocks.length) {
           localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, JSON.stringify(nextPayload));
-          insertCopiedBlocks(nextPayload);
+          insertCopiedBlocks(nextPayload, targetPoint);
           toast.success('Canvas component pasted');
           return;
         }
@@ -276,7 +410,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       if (parsed?.type === 'cnvs-block' && (parsed as LegacyCopiedBlockPayload).block?.id) {
         const nextPayload: CopiedBlockPayload = { type: 'cnvs-blocks', blocks: [(parsed as LegacyCopiedBlockPayload).block] };
         localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, JSON.stringify(nextPayload));
-        insertCopiedBlocks(nextPayload);
+        insertCopiedBlocks(nextPayload, targetPoint);
         toast.success('Canvas component pasted');
         return;
       }
@@ -299,7 +433,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       }
     }
 
-    addBlock('note', menu.canvasX, menu.canvasY);
+    addBlock('note', targetPoint.x, targetPoint.y);
     const createdId = useCanvasStore.getState().selectedBlockId;
     if (createdId) {
       updateBlock(createdId, { content: text });
@@ -352,7 +486,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     <div
       ref={containerRef}
       data-canvas="true"
-      className={`fixed inset-0 canvas-dots overflow-hidden select-none touch-none ${isDrawing ? 'cursor-crosshair' : 'cursor-default'}`}
+      className={`fixed inset-0 canvas-dots overflow-hidden select-none ${isDrawing ? 'cursor-crosshair' : 'cursor-default'}`}
       style={{ ...dotOffset, left: `${leftOffsetPercent}%` }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

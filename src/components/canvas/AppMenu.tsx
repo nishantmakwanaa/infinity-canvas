@@ -109,7 +109,7 @@ export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts
                 className="h-8 w-full border border-border bg-card px-2 text-xs font-mono text-foreground outline-none focus:border-foreground"
                 placeholder="Search language"
               />
-              <div className="mt-2 max-h-56 overflow-auto border border-border">
+              <div className="mt-2 max-h-56 overflow-auto no-scrollbar border border-border">
                 {filteredLanguages.map((item) => (
                   <button
                     key={item.code}

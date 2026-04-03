@@ -66,25 +66,35 @@ export function AppHeader({
 
       if (!canvas) { toast.error('No canvas found'); setSharing(false); return; }
 
-      const { data: existing } = await supabase
+      let routeCanvasName = (currentCanvasName || '').trim();
+      if (!routeCanvasName) {
+        const { data: canvasRow } = await supabase
+          .from('canvases')
+          .select('name')
+          .eq('id', canvas.id)
+          .maybeSingle();
+        routeCanvasName = ((canvasRow as any)?.name || '').trim();
+      }
+      const routeOwner = user.username.toLowerCase();
+
+      // Keep Supabase shared metadata in sync with routing architecture.
+      const { data: upsertedShare } = await supabase
         .from('shared_canvases')
-        .select('share_token')
-        .eq('canvas_id', canvas.id)
-        .limit(1)
+        .upsert(
+          {
+            canvas_id: canvas.id,
+            owner_username: routeOwner,
+            canvas_name: routeCanvasName,
+          } as any,
+          { onConflict: 'canvas_id' }
+        )
+        .select('share_token,owner_username,canvas_name')
         .single();
 
-      let token: string;
-      if (existing) { token = existing.share_token; }
-      else {
-        const { data: newShare } = await supabase
-          .from('shared_canvases')
-          .insert({ canvas_id: canvas.id })
-          .select('share_token')
-          .single();
-        token = newShare?.share_token || '';
-      }
-
-      const shareUrl = `${window.location.origin}/view/${token}`;
+      const shareToken = (upsertedShare as any)?.share_token;
+      const shareUrl = routeOwner && routeCanvasName
+        ? `${window.location.origin}/${encodeURIComponent(routeOwner)}/view/${encodeURIComponent(routeCanvasName)}`
+        : `${window.location.origin}/view/${shareToken}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success('Share link copied!');
     } catch { toast.error('Failed to share'); }

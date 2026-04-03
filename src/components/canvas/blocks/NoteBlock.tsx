@@ -14,7 +14,7 @@ export function NoteBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
 
   return (
     <textarea
-      className="w-full h-full p-3 bg-transparent text-foreground text-sm font-mono resize-none focus:outline-none placeholder:text-muted-foreground"
+      className="w-full h-full p-3 bg-transparent text-foreground text-sm font-mono resize-none overflow-auto no-scrollbar focus:outline-none placeholder:text-muted-foreground"
       placeholder="Write something..."
       value={block.content}
       onChange={(e) => {
