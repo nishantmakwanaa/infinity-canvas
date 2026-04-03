@@ -57,7 +57,7 @@ export function AppHeader({ user, loading, onSignIn, onSignOut }: AppHeaderProps
         token = newShare?.share_token || '';
       }
 
-      const shareUrl = `${window.location.origin}/view/${token}`;
+      const shareUrl = `${window.location.origin}/#/view/${token}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success('Share link copied!');
     } catch { toast.error('Failed to share'); }
