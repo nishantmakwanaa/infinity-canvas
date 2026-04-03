@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           blocks: Json
           created_at: string
+          drawings: Json
           id: string
           name: string
           pan_x: number
@@ -29,6 +30,7 @@ export type Database = {
         Insert: {
           blocks?: Json
           created_at?: string
+          drawings?: Json
           id?: string
           name?: string
           pan_x?: number
@@ -40,6 +42,7 @@ export type Database = {
         Update: {
           blocks?: Json
           created_at?: string
+          drawings?: Json
           id?: string
           name?: string
           pan_x?: number
