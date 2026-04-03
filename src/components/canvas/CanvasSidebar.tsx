@@ -1,6 +1,7 @@
 import { Pencil, Trash2, X, Check } from 'lucide-react';
 import type { CanvasMeta } from '@/hooks/useCanvasSync';
 import { useMemo, useState } from 'react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface CanvasSidebarProps {
   loggedInUserId: string | null;
@@ -10,7 +11,8 @@ interface CanvasSidebarProps {
   onSelectCanvas: (id: string) => void;
   onDeleteCanvases: (ids: string[]) => void;
   widthPercent: number;
-  onResizeStart: (e: React.MouseEvent) => void;
+  setWidthPercent: (value: number | ((prev: number) => number)) => void;
+  isMobile?: boolean;
 }
 
 export function CanvasSidebar({
@@ -21,12 +23,14 @@ export function CanvasSidebar({
   onSelectCanvas,
   onDeleteCanvases,
   widthPercent,
-  onResizeStart,
+  setWidthPercent,
+  isMobile = false,
 }: CanvasSidebarProps) {
   if (!loggedInUserId) return null;
 
   const [deleteMode, setDeleteMode] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const selectedIds = useMemo(
     () => Object.entries(selected).filter(([, v]) => v).map(([k]) => k),
@@ -42,15 +46,33 @@ export function CanvasSidebar({
     setSelected({});
   };
 
+  const startResize = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isMobile) return;
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const next = (ev.clientX / window.innerWidth) * 100;
+      setWidthPercent(Math.max(10, Math.min(30, next)));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   return (
     <aside
       className="fixed left-0 top-0 bottom-0 z-[60] border-r border-border bg-card/95 backdrop-blur-sm"
-      style={{ width: `${widthPercent}%` }}
+      style={{ width: isMobile ? '70%' : `${widthPercent}%` }}
     >
-      <div
-        className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent/60"
-        onMouseDown={onResizeStart}
-      />
+      {!isMobile && (
+        <div
+          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-accent/70"
+          onMouseDown={startResize}
+          title="Resize sidebar"
+        />
+      )}
       <div className="h-14 px-3 border-b border-border flex items-center justify-between">
         <span className="text-xs font-mono text-foreground">Your Canvases</span>
         <button
@@ -120,7 +142,7 @@ export function CanvasSidebar({
                 selectedIds.length ? 'bg-foreground text-background border-foreground hover:opacity-90' : 'bg-card text-muted-foreground border-border opacity-60 cursor-not-allowed'
               }`}
               disabled={!selectedIds.length}
-              onClick={() => { onDeleteCanvases(selectedIds); exitDeleteMode(); }}
+              onClick={() => setConfirmDeleteOpen(true)}
               title="Delete selected"
             >
               <Trash2 size={14} /> Delete ({selectedIds.length})
@@ -132,6 +154,46 @@ export function CanvasSidebar({
           {deleteMode ? 'Select canvases to delete' : `${canvases.length} total`}
         </span>
       </div>
+
+      <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <DialogContent className="max-w-sm" data-no-translate="true">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-mono">Delete selected canvases?</DialogTitle>
+            <DialogDescription className="text-xs font-mono">
+              This action cannot be undone. {selectedIds.length} canvas{selectedIds.length > 1 ? 'es' : ''} will be removed.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-44 overflow-auto border border-border">
+            {canvases
+              .filter((canvas) => selected[canvas.id])
+              .map((canvas) => (
+                <div key={canvas.id} className="px-2 py-1.5 text-xs font-mono border-b border-border last:border-b-0">
+                  {canvas.name || 'Untitled Canvas'}
+                </div>
+              ))}
+          </div>
+
+          <DialogFooter>
+            <button
+              className="h-8 px-3 border border-border text-xs font-mono"
+              onClick={() => setConfirmDeleteOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="h-8 px-3 border border-foreground bg-foreground text-background text-xs font-mono"
+              onClick={() => {
+                onDeleteCanvases(selectedIds);
+                setConfirmDeleteOpen(false);
+                exitDeleteMode();
+              }}
+            >
+              Confirm delete
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

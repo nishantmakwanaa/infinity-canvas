@@ -145,3 +145,14 @@
     scrollbar-width: none;
   }
 }
+
+/* Hide Google Translate Banner and reset body margin */
+body > .skiptranslate {
+    display: none !important;
+}
+body {
+    top: 0 !important;
+}
+#goog-gt-tt {
+    display: none !important;
+}

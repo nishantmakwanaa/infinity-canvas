@@ -102,7 +102,7 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
   }
 }
 
-export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
+export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: boolean; leftOffsetPercent?: number }) {
   const { drawingElements, activeTool, toolSettings, pan, zoom, addDrawingElement, deleteDrawingElement } = useCanvasStore();
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
@@ -111,13 +111,19 @@ export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
   const [textValue, setTextValue] = useState('');
   const isDrawing = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const layerRef = useRef<SVGSVGElement>(null);
 
   const isActive = DRAWING_TOOLS.includes(activeTool) && !readOnly;
 
-  const toCanvas = useCallback((e: React.MouseEvent) => ({
-    x: (e.clientX - pan.x) / zoom,
-    y: (e.clientY - pan.y) / zoom,
-  }), [pan, zoom]);
+  const toCanvas = useCallback((e: React.MouseEvent) => {
+    const rect = layerRef.current?.getBoundingClientRect();
+    const left = rect?.left || 0;
+    const top = rect?.top || 0;
+    return {
+      x: (e.clientX - left - pan.x) / zoom,
+      y: (e.clientY - top - pan.y) / zoom,
+    };
+  }, [pan, zoom]);
 
   const strokeW = SIZE_MAP[toolSettings.size].stroke;
   const fontSize = SIZE_MAP[toolSettings.size].text;
@@ -200,9 +206,10 @@ export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
   return (
     <>
       <svg
+        ref={layerRef}
         data-drawing-layer="true"
-        className={`fixed inset-0 ${isActive ? 'z-10' : 'z-[5] pointer-events-none'}`}
-        style={{ width: '100%', height: '100%', cursor: isActive ? getCursor() : 'default' }}
+        className={`fixed top-0 bottom-0 right-0 ${isActive ? 'z-10' : 'z-[5] pointer-events-none'}`}
+        style={{ left: `${leftOffsetPercent}%`, width: 'auto', height: '100%', cursor: isActive ? getCursor() : 'default' }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -252,7 +259,7 @@ export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
           ref={inputRef}
           className="fixed z-20 bg-transparent border-b border-foreground text-foreground font-mono outline-none"
           style={{
-            left: textPos.x * zoom + pan.x,
+            left: textPos.x * zoom + pan.x + (leftOffsetPercent / 100) * window.innerWidth,
             top: textPos.y * zoom + pan.y - fontSize / 2,
             fontSize: fontSize * zoom,
             fontFamily,

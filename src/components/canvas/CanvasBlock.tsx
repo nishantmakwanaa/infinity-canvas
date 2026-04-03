@@ -11,9 +11,9 @@ interface Props {
   readOnly?: boolean;
 }
 
-type ResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+type ResizeDir = 'n' | 's' | 'e' | 'w';
 
-export function CanvasBlockComponent({ block, readOnly }: Props) {
+function CanvasBlockComponentImpl({ block, readOnly }: Props) {
   const { updateBlock, deleteBlock, selectBlock, selectedBlockId, zoom } = useCanvasStore();
   const isSelected = selectedBlockId === block.id;
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -72,7 +72,8 @@ export function CanvasBlockComponent({ block, readOnly }: Props) {
 
   return (
     <div
-      className={`absolute block-base select-none ${isSelected && !readOnly ? 'ring-1 ring-foreground' : ''}`}
+      data-block-id={block.id}
+      className={`absolute block-base select-none ${isSelected && !readOnly ? 'ring-2 ring-foreground ring-offset-1' : ''}`}
       style={{ left: block.x, top: block.y, width: block.width, height: block.height }}
       onMouseDown={handleDragStart}
     >
@@ -88,25 +89,17 @@ export function CanvasBlockComponent({ block, readOnly }: Props) {
         {renderContent()}
       </div>
 
-      {/* Resize handles - all 8 directions */}
+      {/* Resize handles - middle of each side */}
       {!readOnly && isSelected && (
         <>
-          {/* Edges */}
-          <div data-resize="true" className="absolute top-0 left-2 right-2 h-1 cursor-n-resize" onMouseDown={(e) => handleResize(e, 'n')} />
-          <div data-resize="true" className="absolute bottom-0 left-2 right-2 h-1 cursor-s-resize" onMouseDown={(e) => handleResize(e, 's')} />
-          <div data-resize="true" className="absolute left-0 top-2 bottom-2 w-1 cursor-w-resize" onMouseDown={(e) => handleResize(e, 'w')} />
-          <div data-resize="true" className="absolute right-0 top-2 bottom-2 w-1 cursor-e-resize" onMouseDown={(e) => handleResize(e, 'e')} />
-          {/* Corners */}
-          <div data-resize="true" className="absolute top-0 left-0 w-3 h-3 cursor-nw-resize" onMouseDown={(e) => handleResize(e, 'nw')} />
-          <div data-resize="true" className="absolute top-0 right-0 w-3 h-3 cursor-ne-resize" onMouseDown={(e) => handleResize(e, 'ne')} />
-          <div data-resize="true" className="absolute bottom-0 left-0 w-3 h-3 cursor-sw-resize" onMouseDown={(e) => handleResize(e, 'sw')} />
-          <div data-resize="true" className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize border-r-2 border-b-2 border-muted-foreground/40" onMouseDown={(e) => handleResize(e, 'se')} />
+          <div data-resize="true" className="absolute top-0 left-1/2 -translate-x-1/2 h-2 w-10 cursor-n-resize" onMouseDown={(e) => handleResize(e, 'n')} />
+          <div data-resize="true" className="absolute bottom-0 left-1/2 -translate-x-1/2 h-2 w-10 cursor-s-resize" onMouseDown={(e) => handleResize(e, 's')} />
+          <div data-resize="true" className="absolute left-0 top-1/2 -translate-y-1/2 w-2 h-10 cursor-w-resize" onMouseDown={(e) => handleResize(e, 'w')} />
+          <div data-resize="true" className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-10 cursor-e-resize" onMouseDown={(e) => handleResize(e, 'e')} />
         </>
-      )}
-      {/* Always show SE handle */}
-      {!readOnly && !isSelected && (
-        <div data-resize="true" className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize border-r-2 border-b-2 border-muted-foreground/40 hover:border-foreground transition-colors" onMouseDown={(e) => handleResize(e, 'se')} />
       )}
     </div>
   );
 }
+
+export const CanvasBlockComponent = React.memo(CanvasBlockComponentImpl);

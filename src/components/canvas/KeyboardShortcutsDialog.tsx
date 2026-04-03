@@ -2,16 +2,17 @@ import { X } from 'lucide-react';
 
 const SHORTCUTS = [
   { section: 'Tools', items: [
-    ['Note', 'Ctrl N'], ['Link', 'Ctrl L'], ['Todo', 'Ctrl T'], ['Media', 'Ctrl M'],
-    ['Pencil', 'Ctrl P'], ['Eraser', 'Ctrl E'], ['Text', 'Ctrl X'], ['Shape', 'Ctrl S'],
-    ['Line', 'Ctrl -'], ['Arrow', 'Ctrl A'], ['Select', 'Ctrl V'],
+    ['Note', 'Alt/Ctrl + N'], ['Link', 'Alt/Ctrl + L'], ['Todo', 'Alt/Ctrl + T'], ['Media', 'Alt/Ctrl + M'],
+    ['Pencil', 'Alt/Ctrl + P'], ['Eraser', 'Alt/Ctrl + E'], ['Text', 'Alt/Ctrl + X'], ['Shape', 'Alt/Ctrl + S'],
+    ['Line', 'Alt/Ctrl + I'], ['Arrow', 'Alt/Ctrl + A'], ['Select', 'Alt/Ctrl + V'],
   ]},
   { section: 'View', items: [
-    ['Zoom in', 'Ctrl +'], ['Zoom out', 'Ctrl -'], ['Zoom to 100%', 'Ctrl 0'],
-    ['Reset view', 'Ctrl R'],
+    ['Zoom in', 'Alt/Ctrl + ='], ['Zoom out', 'Alt/Ctrl + -'], ['Zoom to 100%', 'Alt/Ctrl + 0'],
+    ['Reset view', 'Alt/Ctrl + R'],
   ]},
   { section: 'Edit', items: [
-    ['Delete', 'Delete'], ['Undo', 'Ctrl Z'], ['Redo', 'Ctrl Shift Z'],
+    ['Copy selected block', 'Alt/Ctrl + C'],
+    ['Delete', 'Delete'],
   ]},
 ];
 

@@ -6,26 +6,34 @@ import Index from "./pages/Index";
 import SharedCanvas from "./pages/SharedCanvas";
 import Manual from "./pages/Manual";
 import NotFound from "./pages/NotFound";
+import { useRealtimeTranslation } from "@/hooks/useRealtimeTranslation";
 
 const queryClient = new QueryClient();
 
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/:username" element={<Index />} />
-          <Route path="/:username/:canvasName" element={<Index />} />
-          <Route path="/:username/view/:canvasName" element={<SharedCanvas />} />
-          <Route path="/view/:token" element={<SharedCanvas />} />
-          <Route path="/manual" element={<Manual />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+const App = () => {
+  useRealtimeTranslation();
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Sonner />
+        <BrowserRouter
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true,
+          }}
+        >
+          <Routes>
+            <Route path="/view/:token" element={<SharedCanvas />} />
+            <Route path="/:username/view/:canvasName" element={<SharedCanvas />} />
+            <Route path="/manual" element={<Manual />} />
+            <Route path="/:username?/:canvasName?" element={<Index />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+};
 
 export default App;

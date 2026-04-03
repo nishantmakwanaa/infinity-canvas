@@ -1,9 +1,11 @@
-import { LogOut, Share2, User as UserIcon, Download, Puzzle, MoreVertical } from 'lucide-react';
-import { useState } from 'react';
+import { LogOut, Share2, User as UserIcon, Download, Puzzle, MoreVertical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { exportCanvasAsPng, exportCanvasAsSvg } from '@/lib/export';
+import { exportCanvasAsCnvs, exportCanvasAsPng, exportCanvasAsSvg, importCanvasFromCnvsFile } from '@/lib/export';
 import { AppMenu } from './AppMenu';
+import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
+import { FeedbackDialog } from './FeedbackDialog';
 
 interface AuthUser {
   id: string;
@@ -20,17 +22,34 @@ interface AppHeaderProps {
   currentCanvasId?: string | null;
   currentCanvasName?: string | null;
   leftOffsetPercent?: number;
+  showSidebarToggle?: boolean;
+  isSidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
-export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId, currentCanvasName, leftOffsetPercent = 0 }: AppHeaderProps) {
+export function AppHeader({
+  user,
+  loading,
+  onSignIn,
+  onSignOut,
+  currentCanvasId,
+  currentCanvasName,
+  leftOffsetPercent = 0,
+  showSidebarToggle = false,
+  isSidebarOpen = true,
+  onToggleSidebar,
+}: AppHeaderProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
+  const [showFeedbackDialog, setShowFeedbackDialog] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const handleShare = async () => {
     if (!user) return;
@@ -84,6 +103,15 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
         style={{ left: `${leftOffsetPercent}%` }}
       >
         <div className="flex items-center gap-2">
+          {showSidebarToggle && (
+            <button
+              onClick={onToggleSidebar}
+              className="toolbar-btn w-8 h-8"
+              title={isSidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+            >
+              {isSidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
+            </button>
+          )}
           <div className="w-7 h-7 bg-foreground flex items-center justify-center">
             <span className="text-background text-xs font-bold font-mono">C</span>
           </div>
@@ -95,7 +123,12 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
             {showMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
-                <AppMenu onClose={() => setShowMenu(false)} isLoggedIn={Boolean(user)} />
+                <AppMenu
+                  onClose={() => setShowMenu(false)}
+                  isLoggedIn={Boolean(user)}
+                  onOpenShortcuts={() => setShowShortcutsDialog(true)}
+                  onOpenFeedback={() => setShowFeedbackDialog(true)}
+                />
               </>
             )}
           </div>
@@ -125,9 +158,32 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
                 <div className="absolute right-0 top-11 z-50 w-32 border border-border bg-card">
                   <button onClick={() => { exportCanvasAsPng(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
                   <button onClick={() => { exportCanvasAsSvg(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
+                  <button onClick={() => { exportCanvasAsCnvs(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
+                  <button
+                    onClick={() => {
+                      importInputRef.current?.click();
+                      setShowExport(false);
+                    }}
+                    className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent"
+                  >
+                    Load .cnvs
+                  </button>
                 </div>
               </>
             )}
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".cnvs,application/json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  await importCanvasFromCnvsFile(file);
+                }
+                e.currentTarget.value = '';
+              }}
+            />
           </div>
         )}
 
@@ -158,6 +214,9 @@ export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId,
         )}
         </div>
       </header>
+
+      {showShortcutsDialog && <KeyboardShortcutsDialog onClose={() => setShowShortcutsDialog(false)} />}
+      {showFeedbackDialog && <FeedbackDialog onClose={() => setShowFeedbackDialog(false)} />}
     </>
   );
 }

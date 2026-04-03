@@ -1,5 +1,6 @@
 import { useCanvasStore, CanvasBlock, TodoItem } from '@/store/canvasStore';
 import { Plus, Check } from 'lucide-react';
+import { getTodoSize } from '@/lib/blockSizing';
 
 export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
@@ -7,22 +8,34 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
 
   const updateTodo = (todoId: string, updates: Partial<TodoItem>) => {
     if (readOnly) return;
+    const nextTodos = todos.map((t) => (t.id === todoId ? { ...t, ...updates } : t));
+    const size = getTodoSize(nextTodos);
     updateBlock(block.id, {
-      todos: todos.map((t) => (t.id === todoId ? { ...t, ...updates } : t)),
+      todos: nextTodos,
+      width: size.width,
+      height: size.height,
     });
   };
 
   const addTodo = () => {
     if (readOnly) return;
+    const nextTodos = [...todos, { id: `todo-${Date.now()}`, text: '', done: false }];
+    const size = getTodoSize(nextTodos);
     updateBlock(block.id, {
-      todos: [...todos, { id: `todo-${Date.now()}`, text: '', done: false }],
+      todos: nextTodos,
+      width: size.width,
+      height: size.height,
     });
   };
 
   const removeTodo = (todoId: string) => {
     if (readOnly) return;
+    const nextTodos = todos.filter((t) => t.id !== todoId);
+    const size = getTodoSize(nextTodos);
     updateBlock(block.id, {
-      todos: todos.filter((t) => t.id !== todoId),
+      todos: nextTodos,
+      width: size.width,
+      height: size.height,
     });
   };
 

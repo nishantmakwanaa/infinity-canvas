@@ -10,6 +10,7 @@ export interface CanvasMeta {
 }
 
 const GUEST_CANVAS_STORAGE_KEY = 'cnvs_guest_canvas_v1';
+const LAST_OPENED_CANVAS_KEY_PREFIX = 'cnvs_last_opened_canvas_v1_';
 
 interface LocalCanvasSnapshot {
   blocks: CanvasBlock[];
@@ -70,14 +71,36 @@ function clearGuestSnapshot() {
   }
 }
 
-export function useCanvasSync(session: Session | null, username?: string) {
+function lastOpenedCanvasKey(userId: string) {
+  return `${LAST_OPENED_CANVAS_KEY_PREFIX}${userId}`;
+}
+
+function readLastOpenedCanvasId(userId: string): string | null {
+  try {
+    return localStorage.getItem(lastOpenedCanvasKey(userId));
+  } catch {
+    return null;
+  }
+}
+
+function writeLastOpenedCanvasId(userId: string, canvasId: string) {
+  try {
+    localStorage.setItem(lastOpenedCanvasKey(userId), canvasId);
+  } catch {
+    // Ignore storage access errors.
+  }
+}
+
+export function useCanvasSync(session: Session | null) {
   const canvasIdRef = useRef<string | null>(null);
+  const currentCanvasIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
   const [currentCanvasName, setCurrentCanvasName] = useState<string | null>(null);
+  const [isCanvasLoading, setIsCanvasLoading] = useState(true);
 
   const refreshCanvases = useCallback(async (userId: string) => {
     const { data } = await supabase
@@ -89,37 +112,64 @@ export function useCanvasSync(session: Session | null, username?: string) {
     return (data || []) as CanvasMeta[];
   }, []);
 
-  const loadCanvasById = useCallback(async (canvasId: string) => {
+  const loadCanvasById = useCallback(async (canvasId: string, persistForUserId?: string) => {
     const seq = ++loadSeqRef.current;
     isLoadingRef.current = true;
-    const { data } = await supabase
-      .from('canvases')
-      .select('*')
-      .eq('id', canvasId)
-      .single();
+    setIsCanvasLoading(true);
 
-    if (seq !== loadSeqRef.current) return;
+    try {
+      const { data } = await supabase
+        .from('canvases')
+        .select('*')
+        .eq('id', canvasId)
+        .single();
 
-    if (data) {
-      canvasIdRef.current = data.id;
-      setCurrentCanvasId(data.id);
-      setCurrentCanvasName((data as any).name || null);
-      const store = useCanvasStore.getState();
-      const drawings = (data as any).drawings as DrawingElement[] || [];
-      store.loadCanvas(
-        (data.blocks as unknown as CanvasBlock[]) || [],
-        { x: data.pan_x, y: data.pan_y },
-        data.zoom,
-        drawings
-      );
+      if (seq !== loadSeqRef.current) return;
+
+      if (data) {
+        canvasIdRef.current = data.id;
+        currentCanvasIdRef.current = data.id;
+        setCurrentCanvasId(data.id);
+        setCurrentCanvasName((data as any).name || null);
+        if (persistForUserId) {
+          writeLastOpenedCanvasId(persistForUserId, data.id);
+        }
+        const store = useCanvasStore.getState();
+        const drawings = (data as any).drawings as DrawingElement[] || [];
+        store.loadCanvas(
+          (data.blocks as unknown as CanvasBlock[]) || [],
+          { x: data.pan_x, y: data.pan_y },
+          data.zoom,
+          drawings
+        );
+      }
+    } finally {
+      isLoadingRef.current = false;
+      if (seq === loadSeqRef.current) {
+        setIsCanvasLoading(false);
+      }
     }
-    isLoadingRef.current = false;
   }, []);
 
-  const loadCanvas = useCallback(async (userId: string, uname?: string) => {
+  const loadCanvas = useCallback(async (userId: string) => {
+    const autoLoadSeq = ++loadSeqRef.current;
+    const wasAutoLoadCancelled = () => loadSeqRef.current !== autoLoadSeq;
+
     isLoadingRef.current = true;
+    setIsCanvasLoading(true);
+
     const list = await refreshCanvases(userId);
-    const first = list[0];
+    if (wasAutoLoadCancelled()) {
+      isLoadingRef.current = false;
+      return;
+    }
+
+    const savedId = readLastOpenedCanvasId(userId);
+    const selectedDuringStartup = currentCanvasIdRef.current
+      ? list.find((canvas) => canvas.id === currentCanvasIdRef.current)
+      : null;
+    const preferred = savedId ? list.find((canvas) => canvas.id === savedId) : null;
+    const first = selectedDuringStartup || preferred || list[0];
     const guestSnapshot = readGuestSnapshot();
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
 
@@ -141,14 +191,24 @@ export function useCanvasSync(session: Session | null, username?: string) {
       if (importedCanvas?.id) {
         clearGuestSnapshot();
         await refreshCanvases(userId);
-        await loadCanvasById(importedCanvas.id);
+        if (wasAutoLoadCancelled()) {
+          isLoadingRef.current = false;
+          return;
+        }
+        await loadCanvasById(importedCanvas.id, userId);
         isLoadingRef.current = false;
+        setIsCanvasLoading(false);
         return;
       }
     }
 
+    if (wasAutoLoadCancelled()) {
+      isLoadingRef.current = false;
+      return;
+    }
+
     if (first?.id) {
-      await loadCanvasById(first.id);
+      await loadCanvasById(first.id, userId);
       // Fix old default canvas name once, so URL stays in the new pattern.
       if (isLegacyUsernameCanvasName(first.name)) {
         const newName = formatDayTimeName();
@@ -170,12 +230,15 @@ export function useCanvasSync(session: Session | null, username?: string) {
         .single();
       if (newCanvas) {
         canvasIdRef.current = newCanvas.id;
+        currentCanvasIdRef.current = newCanvas.id;
         setCurrentCanvasId(newCanvas.id);
+        writeLastOpenedCanvasId(userId, newCanvas.id);
         await refreshCanvases(userId);
-        await loadCanvasById(newCanvas.id);
+        await loadCanvasById(newCanvas.id, userId);
       }
     }
     isLoadingRef.current = false;
+    setIsCanvasLoading(false);
   }, [loadCanvasById, refreshCanvases]);
 
   const createCanvas = useCallback(async (name?: string) => {
@@ -184,17 +247,27 @@ export function useCanvasSync(session: Session | null, username?: string) {
     const { data: newCanvas } = await supabase
       .from('canvases')
       .insert({ user_id: session.user.id, blocks: [], drawings: [], pan_x: 0, pan_y: 0, zoom: 1, name: canvasName })
-      .select('id')
+      .select('id,name,updated_at')
       .single();
     if (newCanvas?.id) {
-      await refreshCanvases(session.user.id);
-      await loadCanvasById(newCanvas.id);
+      const now = new Date().toISOString();
+      canvasIdRef.current = newCanvas.id;
+      currentCanvasIdRef.current = newCanvas.id;
+      setCurrentCanvasId(newCanvas.id);
+      setCurrentCanvasName(newCanvas.name || canvasName);
+      writeLastOpenedCanvasId(session.user.id, newCanvas.id);
+      useCanvasStore.getState().loadCanvas([], { x: 0, y: 0 }, 1, []);
+      setCanvases((prev) => {
+        const next = [{ id: newCanvas.id, name: newCanvas.name || canvasName, updated_at: newCanvas.updated_at || now }, ...prev.filter((c) => c.id !== newCanvas.id)];
+        return next;
+      });
+      void refreshCanvases(session.user.id);
     }
-  }, [loadCanvasById, refreshCanvases, session?.user?.id]);
+  }, [refreshCanvases, session?.user?.id]);
 
   const selectCanvas = useCallback(async (canvasId: string) => {
-    await loadCanvasById(canvasId);
-  }, [loadCanvasById]);
+    await loadCanvasById(canvasId, session?.user?.id);
+  }, [loadCanvasById, session?.user?.id]);
 
   const selectCanvasByName = useCallback(async (name: string) => {
     if (!session?.user?.id) return;
@@ -206,7 +279,7 @@ export function useCanvasSync(session: Session | null, username?: string) {
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (data?.id) await loadCanvasById(data.id);
+    if (data?.id) await loadCanvasById(data.id, session.user.id);
   }, [loadCanvasById, session?.user?.id]);
 
   const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string) => {
@@ -215,9 +288,9 @@ export function useCanvasSync(session: Session | null, username?: string) {
       p_canvas_name: name,
     });
     if (!error && data) {
-      await loadCanvasById(data as string);
+      await loadCanvasById(data as string, session?.user?.id);
     }
-  }, [loadCanvasById]);
+  }, [loadCanvasById, session?.user?.id]);
 
   const deleteCanvases = useCallback(async (ids: string[]) => {
     if (!session?.user?.id) return;
@@ -234,9 +307,17 @@ export function useCanvasSync(session: Session | null, username?: string) {
 
     if (!error) {
       const list = await refreshCanvases(session.user.id);
+      const activeId = currentCanvasIdRef.current;
+      const activeStillExists = activeId ? list.some((canvas) => canvas.id === activeId) : false;
+
+      if (activeStillExists) {
+        isLoadingRef.current = false;
+        return;
+      }
+
       const next = list[0];
       if (next?.id) {
-        await loadCanvasById(next.id);
+        await loadCanvasById(next.id, session.user.id);
       } else {
         // No canvases left: create a new empty one in the usual pattern.
         await createCanvas();
@@ -265,9 +346,7 @@ export function useCanvasSync(session: Session | null, username?: string) {
       if (!error) {
         setCanvases((prev) => {
           const now = new Date().toISOString();
-          const next = prev.map((c) => c.id === canvasIdRef.current ? { ...c, updated_at: now } : c);
-          next.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-          return next;
+          return prev.map((c) => (c.id === canvasIdRef.current ? { ...c, updated_at: now } : c));
         });
       }
     }, 1000);
@@ -289,9 +368,10 @@ export function useCanvasSync(session: Session | null, username?: string) {
 
   useEffect(() => {
     if (session?.user?.id) {
-      loadCanvas(session.user.id, username);
+      loadCanvas(session.user.id);
     } else {
       canvasIdRef.current = null;
+      currentCanvasIdRef.current = null;
       setCurrentCanvasId(null);
       setCurrentCanvasName(null);
       setCanvases([]);
@@ -306,8 +386,9 @@ export function useCanvasSync(session: Session | null, username?: string) {
       } else {
         useCanvasStore.getState().loadCanvas([], { x: 0, y: 0 }, 1);
       }
+      setIsCanvasLoading(false);
     }
-  }, [session?.user?.id, username, loadCanvas]);
+  }, [session?.user?.id, loadCanvas]);
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -335,5 +416,6 @@ export function useCanvasSync(session: Session | null, username?: string) {
     selectCanvasByRoute,
     createCanvas,
     deleteCanvases,
+    isCanvasLoading,
   };
 }
