@@ -1,0 +1,1 @@
+ALTER TABLE public.canvases ADD COLUMN drawings jsonb NOT NULL DEFAULT '[]'::jsonb;
