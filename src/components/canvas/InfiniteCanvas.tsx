@@ -7,6 +7,11 @@ import { toast } from 'sonner';
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
 
 interface CopiedBlockPayload {
+  type: 'cnvs-blocks';
+  blocks: CanvasBlock[];
+}
+
+interface LegacyCopiedBlockPayload {
   type: 'cnvs-block';
   block: CanvasBlock;
 }
@@ -25,14 +30,19 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   const zoom = useCanvasStore((s) => s.zoom);
   const setPan = useCanvasStore((s) => s.setPan);
   const setZoom = useCanvasStore((s) => s.setZoom);
+  const clearCanvas = useCanvasStore((s) => s.clearCanvas);
   const selectBlock = useCanvasStore((s) => s.selectBlock);
+  const selectBlocks = useCanvasStore((s) => s.selectBlocks);
+  const selectedBlockIds = useCanvasStore((s) => s.selectedBlockIds);
   const activeTool = useCanvasStore((s) => s.activeTool);
   const updateBlock = useCanvasStore((s) => s.updateBlock);
   const addBlock = useCanvasStore((s) => s.addBlock);
   const setActiveTool = useCanvasStore((s) => s.setActiveTool);
   const containerRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
+  const isTouchPanning = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
+  const lastTouch = useRef({ x: 0, y: 0 });
   const isDrawing = DRAWING_TOOLS.includes(activeTool);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; canvasX: number; canvasY: number; blockId: string | null }>({
     open: false,
@@ -93,6 +103,35 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     isPanning.current = false;
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (loading || isDrawing) return;
+    if (e.touches.length !== 1) return;
+
+    const target = e.target as HTMLElement;
+    if (target.closest('input, textarea, button, video, iframe, [contenteditable="true"]')) {
+      return;
+    }
+
+    if (menu.open) setMenu((m) => ({ ...m, open: false }));
+    isTouchPanning.current = true;
+    lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isTouchPanning.current || e.touches.length !== 1) return;
+    e.preventDefault();
+    const t = e.touches[0];
+    const dx = t.clientX - lastTouch.current.x;
+    const dy = t.clientY - lastTouch.current.y;
+    lastTouch.current = { x: t.clientX, y: t.clientY };
+    const state = useCanvasStore.getState();
+    state.setPan({ x: state.pan.x + dx, y: state.pan.y + dy });
+  };
+
+  const handleTouchEnd = () => {
+    isTouchPanning.current = false;
+  };
+
   const dotOffset = {
     backgroundPosition: `${pan.x % 24}px ${pan.y % 24}px`,
   };
@@ -144,42 +183,67 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     return false;
   };
 
-  const readCopiedCanvasBlock = (): CopiedBlockPayload | null => {
+  const readCopiedCanvasBlocks = (): CopiedBlockPayload | null => {
     try {
       const raw = localStorage.getItem(CANVAS_BLOCK_CLIPBOARD_KEY);
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as CopiedBlockPayload;
-      if (parsed?.type !== 'cnvs-block' || !parsed?.block?.id) return null;
+      const parsed = JSON.parse(raw) as CopiedBlockPayload | LegacyCopiedBlockPayload;
+      if (parsed?.type === 'cnvs-blocks' && Array.isArray((parsed as CopiedBlockPayload).blocks)) {
+        const blocks = (parsed as CopiedBlockPayload).blocks.filter((block) => block?.id);
+        if (!blocks.length) return null;
+        return { type: 'cnvs-blocks', blocks };
+      }
+      if (parsed?.type === 'cnvs-block' && (parsed as LegacyCopiedBlockPayload).block?.id) {
+        return { type: 'cnvs-blocks', blocks: [(parsed as LegacyCopiedBlockPayload).block] };
+      }
       return parsed;
     } catch {
       return null;
     }
   };
 
-  const insertCopiedBlock = (payload: CopiedBlockPayload) => {
-    const source = payload.block;
-    const clonedId = genId();
-    const clonedTodos = source.todos?.map((todo) => ({ ...todo, id: genId() }));
-    const cloned: CanvasBlock = {
-      ...source,
-      id: clonedId,
-      x: menu.canvasX,
-      y: menu.canvasY,
-      todos: clonedTodos,
-    };
+  const insertCopiedBlocks = (payload: CopiedBlockPayload) => {
+    const sourceBlocks = payload.blocks || [];
+    if (!sourceBlocks.length) return;
+
+    const minX = Math.min(...sourceBlocks.map((block) => block.x));
+    const minY = Math.min(...sourceBlocks.map((block) => block.y));
+    const offsetX = menu.canvasX - minX;
+    const offsetY = menu.canvasY - minY;
+
+    const clonedBlocks = sourceBlocks.map((source) => {
+      const clonedId = genId();
+      const clonedTodos = source.todos?.map((todo) => ({ ...todo, id: genId() }));
+      return {
+        ...source,
+        id: clonedId,
+        x: source.x + offsetX,
+        y: source.y + offsetY,
+        todos: clonedTodos,
+      } as CanvasBlock;
+    });
 
     useCanvasStore.setState((state) => ({
-      blocks: [...state.blocks, cloned],
-      selectedBlockId: clonedId,
+      blocks: [...state.blocks, ...clonedBlocks],
+      selectedBlockId: clonedBlocks[0]?.id || null,
+      selectedBlockIds: clonedBlocks.map((block) => block.id),
       activeTool: 'select',
     }));
   };
 
   const handlePaste = async () => {
-    const copiedBlock = readCopiedCanvasBlock();
-    if (copiedBlock) {
-      insertCopiedBlock(copiedBlock);
-      toast.success('Canvas block pasted');
+    const current = useCanvasStore.getState();
+    const selected = current.blocks.filter((block) => current.selectedBlockIds.includes(block.id));
+    if (selected.length) {
+      insertCopiedBlocks({ type: 'cnvs-blocks', blocks: selected });
+      toast.success('Canvas component pasted');
+      return;
+    }
+
+    const copiedBlocks = readCopiedCanvasBlocks();
+    if (copiedBlocks) {
+      insertCopiedBlocks(copiedBlocks);
+      toast.success('Canvas component pasted');
       return;
     }
 
@@ -196,11 +260,24 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }
 
     try {
-      const parsed = JSON.parse(text) as CopiedBlockPayload;
-      if (parsed?.type === 'cnvs-block' && parsed?.block?.id) {
-        localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, text);
-        insertCopiedBlock(parsed);
-        toast.success('Canvas block pasted');
+      const parsed = JSON.parse(text) as CopiedBlockPayload | LegacyCopiedBlockPayload;
+      if (parsed?.type === 'cnvs-blocks' && Array.isArray((parsed as CopiedBlockPayload).blocks)) {
+        const nextPayload: CopiedBlockPayload = {
+          type: 'cnvs-blocks',
+          blocks: (parsed as CopiedBlockPayload).blocks.filter((block) => block?.id),
+        };
+        if (nextPayload.blocks.length) {
+          localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, JSON.stringify(nextPayload));
+          insertCopiedBlocks(nextPayload);
+          toast.success('Canvas component pasted');
+          return;
+        }
+      }
+      if (parsed?.type === 'cnvs-block' && (parsed as LegacyCopiedBlockPayload).block?.id) {
+        const nextPayload: CopiedBlockPayload = { type: 'cnvs-blocks', blocks: [(parsed as LegacyCopiedBlockPayload).block] };
+        localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, JSON.stringify(nextPayload));
+        insertCopiedBlocks(nextPayload);
+        toast.success('Canvas component pasted');
         return;
       }
     } catch {
@@ -233,14 +310,13 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   const handleSelect = () => {
     if (menu.blockId) {
       setActiveTool('select');
-      selectBlock(menu.blockId);
-      selectEditableText(getEditableElement(menu.blockId));
+      selectBlocks([menu.blockId]);
+      toast.success('Canvas component selected');
       return;
     }
 
-    const selectedId = useCanvasStore.getState().selectedBlockId;
-    if (selectedId) {
-      selectEditableText(getEditableElement(selectedId));
+    if (selectedBlockIds.length) {
+      toast.success('Canvas component selected');
       return;
     }
 
@@ -255,41 +331,19 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   };
 
   const handleSelectAll = () => {
-    if (menu.blockId) {
-      if (selectEditableText(getEditableElement(menu.blockId))) return;
-    }
-
-    const selectedId = useCanvasStore.getState().selectedBlockId;
-    if (selectedId) {
-      if (selectEditableText(getEditableElement(selectedId))) return;
-    }
-
-    const active = document.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
-    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
-      active.select();
-      toast.success('Selected all');
-      return;
-    }
-
-    const canvasEl = containerRef.current?.querySelector('[data-canvas-content="true"]') as HTMLElement | null;
-    if (!canvasEl) {
+    const ids = useCanvasStore.getState().blocks.map((block) => block.id);
+    if (!ids.length) {
       toast.info('Nothing selectable in canvas');
       return;
     }
-
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(canvasEl);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    toast.success('Selected all in canvas');
+    setActiveTool('select');
+    selectBlocks(ids);
+    toast.success('All canvas components selected');
   };
 
   const handleResetCanvas = () => {
-    setPan({ x: 0, y: 0 });
-    setZoom(1);
-    selectBlock(null);
-    toast.success('Canvas reset');
+    clearCanvas();
+    toast.success('Canvas cleared');
   };
 
   const closeMenu = () => setMenu((m) => ({ ...m, open: false }));
@@ -298,17 +352,21 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     <div
       ref={containerRef}
       data-canvas="true"
-      className={`fixed inset-0 canvas-dots overflow-hidden select-none ${isDrawing ? 'cursor-crosshair' : 'cursor-default'}`}
+      className={`fixed inset-0 canvas-dots overflow-hidden select-none touch-none ${isDrawing ? 'cursor-crosshair' : 'cursor-default'}`}
       style={{ ...dotOffset, left: `${leftOffsetPercent}%` }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
       onContextMenu={onCanvasContextMenu}
     >
       {loading ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/90">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-foreground" />
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-border/80 border-t-foreground" />
         </div>
       ) : (
         <>

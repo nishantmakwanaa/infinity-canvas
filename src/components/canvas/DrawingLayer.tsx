@@ -115,13 +115,13 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
 
   const isActive = DRAWING_TOOLS.includes(activeTool) && !readOnly;
 
-  const toCanvas = useCallback((e: React.MouseEvent) => {
+  const toCanvasFromClient = useCallback((clientX: number, clientY: number) => {
     const rect = layerRef.current?.getBoundingClientRect();
     const left = rect?.left || 0;
     const top = rect?.top || 0;
     return {
-      x: (e.clientX - left - pan.x) / zoom,
-      y: (e.clientY - top - pan.y) / zoom,
+      x: (clientX - left - pan.x) / zoom,
+      y: (clientY - top - pan.y) / zoom,
     };
   }, [pan, zoom]);
 
@@ -129,9 +129,10 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
   const fontSize = SIZE_MAP[toolSettings.size].text;
   const fontFamily = FONT_MAP[toolSettings.fontFamily];
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!isActive) return;
-    const pos = toCanvas(e);
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const pos = toCanvasFromClient(e.clientX, e.clientY);
 
     if (activeTool === 'pencil') {
       isDrawing.current = true;
@@ -147,19 +148,23 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
       setDrawStart(pos);
       setDrawEnd(pos);
     }
+    if (activeTool !== 'eraser') {
+      e.preventDefault();
+    }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!isActive || !isDrawing.current) return;
-    const pos = toCanvas(e);
+    const pos = toCanvasFromClient(e.clientX, e.clientY);
     if (activeTool === 'pencil') {
       setCurrentPath(p => [...p, pos]);
     } else if (activeTool === 'shape' || activeTool === 'line' || activeTool === 'arrow') {
       setDrawEnd(pos);
     }
+    e.preventDefault();
   };
 
-  const handleMouseUp = () => {
+  const handlePointerUp = () => {
     if (!isActive || !isDrawing.current) return;
     isDrawing.current = false;
 
@@ -209,11 +214,12 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
         ref={layerRef}
         data-drawing-layer="true"
         className={`fixed top-0 bottom-0 right-0 ${isActive ? 'z-10' : 'z-[5] pointer-events-none'}`}
-        style={{ left: `${leftOffsetPercent}%`, width: 'auto', height: '100%', cursor: isActive ? getCursor() : 'default' }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        style={{ left: `${leftOffsetPercent}%`, width: 'auto', height: '100%', cursor: isActive ? getCursor() : 'default', touchAction: isActive ? 'none' : 'auto' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
         <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
           {drawingElements.map((el) => (

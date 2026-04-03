@@ -243,12 +243,23 @@ export function useCanvasSync(session: Session | null) {
 
   const createCanvas = useCallback(async (name?: string) => {
     if (!session?.user?.id) return;
+    const createSeq = ++loadSeqRef.current;
+    isLoadingRef.current = true;
+    setIsCanvasLoading(true);
+
     const canvasName = name?.trim() || formatDayTimeName();
     const { data: newCanvas } = await supabase
       .from('canvases')
       .insert({ user_id: session.user.id, blocks: [], drawings: [], pan_x: 0, pan_y: 0, zoom: 1, name: canvasName })
       .select('id,name,updated_at')
       .single();
+
+    if (createSeq !== loadSeqRef.current) {
+      isLoadingRef.current = false;
+      setIsCanvasLoading(false);
+      return;
+    }
+
     if (newCanvas?.id) {
       const now = new Date().toISOString();
       canvasIdRef.current = newCanvas.id;
@@ -263,6 +274,8 @@ export function useCanvasSync(session: Session | null) {
       });
       void refreshCanvases(session.user.id);
     }
+    isLoadingRef.current = false;
+    setIsCanvasLoading(false);
   }, [refreshCanvases, session?.user?.id]);
 
   const selectCanvas = useCallback(async (canvasId: string) => {
@@ -271,6 +284,7 @@ export function useCanvasSync(session: Session | null) {
 
   const selectCanvasByName = useCallback(async (name: string) => {
     if (!session?.user?.id) return;
+    const requestedSeq = loadSeqRef.current;
     const { data } = await supabase
       .from('canvases')
       .select('id')
@@ -279,14 +293,17 @@ export function useCanvasSync(session: Session | null) {
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (requestedSeq !== loadSeqRef.current) return;
     if (data?.id) await loadCanvasById(data.id, session.user.id);
   }, [loadCanvasById, session?.user?.id]);
 
   const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string) => {
+    const requestedSeq = loadSeqRef.current;
     const { data, error } = await supabase.rpc('resolve_user_canvas', {
       p_owner_username: ownerUsername,
       p_canvas_name: name,
     });
+    if (requestedSeq !== loadSeqRef.current) return;
     if (!error && data) {
       await loadCanvasById(data as string, session?.user?.id);
     }

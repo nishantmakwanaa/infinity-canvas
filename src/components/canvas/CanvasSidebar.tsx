@@ -119,7 +119,7 @@ export function CanvasSidebar({
       </div>
 
       {/* Bottom actions */}
-      <div className="absolute left-0 right-0 bottom-0 h-[52px] border-t border-border bg-card/95 px-2 flex items-center justify-between">
+      <div className="absolute left-0 right-0 bottom-0 h-[52px] border-t border-border bg-card/95 px-2 flex items-center gap-2">
         {!deleteMode ? (
           <button
             className="h-9 px-3 border border-border text-xs font-mono hover:bg-accent transition-colors inline-flex items-center gap-2"
@@ -129,7 +129,7 @@ export function CanvasSidebar({
             <Trash2 size={14} /> Delete
           </button>
         ) : (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               className="h-9 px-3 border border-border text-xs font-mono hover:bg-accent transition-colors inline-flex items-center gap-2"
               onClick={exitDeleteMode}
@@ -150,7 +150,7 @@ export function CanvasSidebar({
           </div>
         )}
 
-        <span className="text-[10px] font-mono text-muted-foreground">
+        <span className="ml-auto min-w-0 max-w-[42%] truncate text-right text-[10px] font-mono text-muted-foreground">
           {deleteMode ? 'Select canvases to delete' : `${canvases.length} total`}
         </span>
       </div>
@@ -174,15 +174,15 @@ export function CanvasSidebar({
               ))}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col">
             <button
-              className="h-8 px-3 border border-border text-xs font-mono"
+              className="h-8 w-full px-3 border border-border text-xs font-mono"
               onClick={() => setConfirmDeleteOpen(false)}
             >
               Cancel
             </button>
             <button
-              className="h-8 px-3 border border-foreground bg-foreground text-background text-xs font-mono"
+              className="h-8 w-full px-3 border border-foreground bg-foreground text-background text-xs font-mono"
               onClick={() => {
                 onDeleteCanvases(selectedIds);
                 setConfirmDeleteOpen(false);

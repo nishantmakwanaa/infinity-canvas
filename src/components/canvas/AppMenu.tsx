@@ -8,11 +8,12 @@ import { APP_LANGUAGES, getAppLanguage, setAppLanguage } from '@/lib/i18n';
 interface AppMenuProps {
   onClose: () => void;
   isLoggedIn?: boolean;
+  isMobile?: boolean;
   onOpenShortcuts: () => void;
   onOpenFeedback: () => void;
 }
 
-export function AppMenu({ onClose, isLoggedIn, onOpenShortcuts, onOpenFeedback }: AppMenuProps) {
+export function AppMenu({ onClose, isLoggedIn, isMobile = false, onOpenShortcuts, onOpenFeedback }: AppMenuProps) {
   const navigate = useNavigate();
   const [showExport, setShowExport] = useState(false);
   const [showLanguage, setShowLanguage] = useState(false);
@@ -47,18 +48,27 @@ export function AppMenu({ onClose, isLoggedIn, onOpenShortcuts, onOpenFeedback }
     if (imported) onClose();
   };
 
+  const flyoutSideClass = isMobile ? 'right-full mr-1 left-auto' : 'left-full';
+
   return (
     <>
       <div className="absolute left-0 top-9 z-50 w-52 border border-border bg-card py-1 shadow-lg">
         {/* Export (logged-in only) */}
         {isLoggedIn && (
-          <div className="relative" onMouseEnter={() => setShowExport(true)} onMouseLeave={() => setShowExport(false)}>
-            <button className="w-full flex items-center justify-between px-3 py-2 text-xs font-mono hover:bg-accent transition-colors">
+          <div
+            className="relative"
+            onMouseEnter={() => { if (!isMobile) setShowExport(true); }}
+            onMouseLeave={() => { if (!isMobile) setShowExport(false); }}
+          >
+            <button
+              onClick={() => setShowExport((prev) => !prev)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+            >
               <span className="flex items-center gap-2"><Download size={12} /> Export</span>
               <ChevronRight size={10} />
             </button>
             {showExport && (
-              <div className="absolute left-full top-0 w-32 border border-border bg-card py-1">
+              <div className={`absolute top-0 z-[60] w-32 border border-border bg-card py-1 ${flyoutSideClass}`}>
                 <button onClick={() => { exportCanvasAsPng(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
                 <button onClick={() => { exportCanvasAsSvg(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
                 <button onClick={() => { exportCanvasAsCnvs(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
@@ -80,8 +90,8 @@ export function AppMenu({ onClose, isLoggedIn, onOpenShortcuts, onOpenFeedback }
 
         <div
           className="relative"
-          onMouseEnter={() => setShowLanguage(true)}
-          onMouseLeave={() => setShowLanguage(false)}
+          onMouseEnter={() => { if (!isMobile) setShowLanguage(true); }}
+          onMouseLeave={() => { if (!isMobile) setShowLanguage(false); }}
         >
           <button
             onClick={() => setShowLanguage((prev) => !prev)}
@@ -92,7 +102,7 @@ export function AppMenu({ onClose, isLoggedIn, onOpenShortcuts, onOpenFeedback }
           </button>
 
           {showLanguage && (
-            <div className="absolute left-full top-0 z-[60] w-56 border border-border bg-card p-2 shadow-lg" data-no-translate="true">
+            <div className={`absolute top-0 z-[60] w-56 border border-border bg-card p-2 shadow-lg ${flyoutSideClass}`} data-no-translate="true">
               <input
                 value={languageQuery}
                 onChange={(e) => setLanguageQuery(e.target.value)}

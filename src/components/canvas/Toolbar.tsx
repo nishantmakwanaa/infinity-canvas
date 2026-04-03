@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useCanvasStore, type BlockType } from '@/store/canvasStore';
 import { StickyNote, Link, CheckSquare, Film, Pencil, Eraser, Type, Square, Minus, ArrowRight, ZoomIn, ZoomOut, Maximize, MousePointer2 } from 'lucide-react';
 
@@ -8,6 +9,9 @@ interface ToolbarProps {
 
 export function Toolbar({ leftOffsetPercent = 0, isMobile = false }: ToolbarProps) {
   const { addBlock, zoom, setZoom, setPan, activeTool, setActiveTool } = useCanvasStore();
+  const zoomRef = useRef<HTMLDivElement>(null);
+  const selectorRef = useRef<HTMLDivElement>(null);
+  const [hideZoomForOverlap, setHideZoomForOverlap] = useState(false);
 
   const blockTools = [
     { icon: StickyNote, id: 'note' as const, label: 'Note' },
@@ -34,14 +38,54 @@ export function Toolbar({ leftOffsetPercent = 0, isMobile = false }: ToolbarProp
   };
 
   const toolbarCenterPercent = leftOffsetPercent + (100 - leftOffsetPercent) / 2;
+  const selectorBottom = '1rem';
+  const selectorHeight = isMobile ? 36 : 44;
+  const zoomHeight = 40;
+  const zoomBottom = `calc(${selectorBottom} + ${(selectorHeight - zoomHeight) / 2}px)`;
+
+  useEffect(() => {
+    if (isMobile) {
+      setHideZoomForOverlap(true);
+      return;
+    }
+
+    const checkOverlap = () => {
+      const zoomEl = zoomRef.current;
+      const selectorEl = selectorRef.current;
+      if (!zoomEl || !selectorEl) {
+        setHideZoomForOverlap(false);
+        return;
+      }
+
+      const zoomRect = zoomEl.getBoundingClientRect();
+      const selectorRect = selectorEl.getBoundingClientRect();
+      const verticallyAligned = !(zoomRect.bottom < selectorRect.top || selectorRect.bottom < zoomRect.top);
+      const horizontallyOverlapping = zoomRect.right >= selectorRect.left - 8;
+      setHideZoomForOverlap(verticallyAligned && horizontallyOverlapping);
+    };
+
+    const raf = requestAnimationFrame(checkOverlap);
+    window.addEventListener('resize', checkOverlap);
+
+    const observer = new ResizeObserver(checkOverlap);
+    if (zoomRef.current) observer.observe(zoomRef.current);
+    if (selectorRef.current) observer.observe(selectorRef.current);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', checkOverlap);
+      observer.disconnect();
+    };
+  }, [isMobile, leftOffsetPercent]);
 
   return (
     <>
       {/* Zoom controls - left side */}
-      {!isMobile && (
+      {!isMobile && !hideZoomForOverlap && (
         <div
-          className="fixed bottom-6 z-50 flex items-center gap-px border border-border bg-card"
-          style={{ left: `calc(${leftOffsetPercent}% + 1rem)` }}
+          ref={zoomRef}
+          className="fixed z-50 flex items-center gap-px border border-border bg-card"
+          style={{ left: `calc(${leftOffsetPercent}% + 1rem)`, bottom: zoomBottom }}
         >
           <button className="inline-flex items-center justify-center w-10 h-10 text-foreground hover:bg-accent transition-colors" title="Zoom out" onClick={() => setZoom(zoom - 0.15)}>
             <ZoomOut size={16} />
@@ -58,8 +102,9 @@ export function Toolbar({ leftOffsetPercent = 0, isMobile = false }: ToolbarProp
 
       {/* Main toolbar - center */}
       <div
-        className="fixed bottom-4 -translate-x-1/2 z-50 flex max-w-[calc(100vw-1rem)] overflow-x-auto no-scrollbar items-center gap-px border border-border bg-card shadow-lg"
-        style={{ left: `${toolbarCenterPercent}%` }}
+        ref={selectorRef}
+        className="fixed -translate-x-1/2 z-50 flex max-w-[calc(100vw-1rem)] overflow-x-auto no-scrollbar items-center gap-px border border-border bg-card shadow-lg"
+        style={{ left: `${toolbarCenterPercent}%`, bottom: selectorBottom }}
       >
         <button
           className={`inline-flex items-center justify-center ${isMobile ? 'w-9 h-9' : 'w-11 h-11'} border-r border-border transition-colors ${activeTool === 'select' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-accent'}`}

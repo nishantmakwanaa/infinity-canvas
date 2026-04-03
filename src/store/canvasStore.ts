@@ -65,6 +65,7 @@ interface CanvasState {
   pan: { x: number; y: number };
   zoom: number;
   selectedBlockId: string | null;
+  selectedBlockIds: string[];
   activeTool: ActiveTool;
   toolSettings: ToolSettings;
 
@@ -72,6 +73,7 @@ interface CanvasState {
   updateBlock: (id: string, updates: Partial<CanvasBlock>) => void;
   deleteBlock: (id: string) => void;
   selectBlock: (id: string | null) => void;
+  selectBlocks: (ids: string[]) => void;
   setPan: (pan: { x: number; y: number }) => void;
   setZoom: (zoom: number) => void;
   setActiveTool: (tool: ActiveTool) => void;
@@ -79,6 +81,7 @@ interface CanvasState {
   addDrawingElement: (el: DrawingElement) => void;
   deleteDrawingElement: (id: string) => void;
   clearDrawings: () => void;
+  clearCanvas: () => void;
   loadCanvas: (blocks: CanvasBlock[], pan: { x: number; y: number }, zoom: number, drawings?: DrawingElement[]) => void;
 }
 
@@ -98,6 +101,7 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   pan: { x: 0, y: 0 },
   zoom: 1,
   selectedBlockId: null,
+  selectedBlockIds: [],
   activeTool: 'select',
   toolSettings: {
     color: '#000000',
@@ -129,21 +133,32 @@ export const useCanvasStore = create<CanvasState>((set) => ({
     set((s) => ({
       blocks: s.blocks.filter((b) => b.id !== id),
       selectedBlockId: s.selectedBlockId === id ? null : s.selectedBlockId,
+      selectedBlockIds: s.selectedBlockIds.filter((selectedId) => selectedId !== id),
     })),
 
-  selectBlock: (id) => set({ selectedBlockId: id }),
+  selectBlock: (id) => set({ selectedBlockId: id, selectedBlockIds: id ? [id] : [] }),
+  selectBlocks: (ids) => set({ selectedBlockIds: ids, selectedBlockId: ids[0] || null }),
   setPan: (pan) => set({ pan }),
   setZoom: (zoom) => set({ zoom: Math.min(3, Math.max(0.1, zoom)) }),
-  setActiveTool: (tool) => set({ activeTool: tool, selectedBlockId: null }),
+  setActiveTool: (tool) => set({ activeTool: tool, selectedBlockId: null, selectedBlockIds: [] }),
   setToolSettings: (s) => set((st) => ({ toolSettings: { ...st.toolSettings, ...s } })),
   addDrawingElement: (el) => set((s) => ({ drawingElements: [...s.drawingElements, el] })),
   deleteDrawingElement: (id) => set((s) => ({ drawingElements: s.drawingElements.filter((e) => e.id !== id) })),
   clearDrawings: () => set({ drawingElements: [] }),
+  clearCanvas: () => set({
+    blocks: [],
+    drawingElements: [],
+    pan: { x: 0, y: 0 },
+    zoom: 1,
+    selectedBlockId: null,
+    selectedBlockIds: [],
+    activeTool: 'select',
+  }),
 
   loadCanvas: (blocks, pan, zoom, drawings) => {
     const migrated = blocks.map((b: any) =>
       b.type === 'image' ? { ...b, type: 'media' as BlockType } : b
     );
-    set({ blocks: migrated, pan, zoom, drawingElements: drawings || [], selectedBlockId: null, activeTool: 'select' });
+    set({ blocks: migrated, pan, zoom, drawingElements: drawings || [], selectedBlockId: null, selectedBlockIds: [], activeTool: 'select' });
   },
 }));

@@ -26,13 +26,22 @@ export default function SharedCanvas() {
         canvasId = shared?.canvas_id || null;
       } else if (canvasName && username) {
         const decodedName = decodeURIComponent(canvasName);
-        const { data: sharedByRoute } = await supabase
-          .from('shared_canvases')
-          .select('canvas_id')
-          .eq('owner_username', username)
-          .eq('canvas_name', decodedName)
-          .maybeSingle();
-        canvasId = sharedByRoute?.canvas_id || null;
+        const { data: resolvedByRoute } = await supabase.rpc('resolve_user_canvas', {
+          p_owner_username: username,
+          p_canvas_name: decodedName,
+        });
+
+        if (resolvedByRoute) {
+          canvasId = resolvedByRoute as string;
+        } else {
+          const { data: sharedByRoute } = await supabase
+            .from('shared_canvases')
+            .select('canvas_id')
+            .eq('owner_username', username)
+            .eq('canvas_name', decodedName)
+            .maybeSingle();
+          canvasId = sharedByRoute?.canvas_id || null;
+        }
       }
 
       if (!canvasId) {

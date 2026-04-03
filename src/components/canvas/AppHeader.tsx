@@ -1,11 +1,12 @@
 import { LogOut, Share2, User as UserIcon, Download, Puzzle, MoreVertical, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { exportCanvasAsCnvs, exportCanvasAsPng, exportCanvasAsSvg, importCanvasFromCnvsFile } from '@/lib/export';
+import { exportCanvasAsCnvs, exportCanvasAsPng, exportCanvasAsSvg } from '@/lib/export';
 import { AppMenu } from './AppMenu';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { FeedbackDialog } from './FeedbackDialog';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface AuthUser {
   id: string;
@@ -27,10 +28,6 @@ interface AppHeaderProps {
   onToggleSidebar?: () => void;
 }
 
-function slugifyUsername(value: string) {
-  return value.toLowerCase().trim().replace(/\s+/g, '-');
-}
-
 export function AppHeader({
   user,
   loading,
@@ -49,7 +46,9 @@ export function AppHeader({
   const [showExport, setShowExport] = useState(false);
   const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
   const [showFeedbackDialog, setShowFeedbackDialog] = useState(false);
-  const importInputRef = useRef<HTMLInputElement>(null);
+  const isMobile = useIsMobile();
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const menuPanelRef = useRef<HTMLDivElement>(null);
 
   const handleShare = async () => {
     if (!user) return;
@@ -85,16 +84,27 @@ export function AppHeader({
         token = newShare?.share_token || '';
       }
 
-      const usernameSlug = slugifyUsername(user.username || 'user');
-      const canvasSlug = encodeURIComponent((currentCanvasName || '').trim());
-      const shareUrl = canvasSlug
-        ? `${window.location.origin}/${usernameSlug}/view/${canvasSlug}`
-        : `${window.location.origin}/view/${token}`;
+      const shareUrl = `${window.location.origin}/view/${token}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success('Share link copied!');
     } catch { toast.error('Failed to share'); }
     setSharing(false);
   };
+
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (menuButtonRef.current?.contains(target)) return;
+      if (menuPanelRef.current?.contains(target)) return;
+      setShowMenu(false);
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [showMenu]);
 
   return (
     <>
@@ -116,8 +126,8 @@ export function AppHeader({
             <span className="text-background text-xs font-bold font-mono">C</span>
           </div>
           <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
-          <div className="relative">
-            <button onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
+          <div className="relative" ref={menuPanelRef}>
+            <button ref={menuButtonRef} onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
               <MoreVertical size={14} />
             </button>
             {showMenu && (
@@ -126,6 +136,7 @@ export function AppHeader({
                 <AppMenu
                   onClose={() => setShowMenu(false)}
                   isLoggedIn={Boolean(user)}
+                  isMobile={isMobile}
                   onOpenShortcuts={() => setShowShortcutsDialog(true)}
                   onOpenFeedback={() => setShowFeedbackDialog(true)}
                 />
@@ -159,31 +170,9 @@ export function AppHeader({
                   <button onClick={() => { exportCanvasAsPng(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
                   <button onClick={() => { exportCanvasAsSvg(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
                   <button onClick={() => { exportCanvasAsCnvs(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
-                  <button
-                    onClick={() => {
-                      importInputRef.current?.click();
-                      setShowExport(false);
-                    }}
-                    className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent"
-                  >
-                    Load .cnvs
-                  </button>
                 </div>
               </>
             )}
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".cnvs,application/json"
-              className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  await importCanvasFromCnvsFile(file);
-                }
-                e.currentTarget.value = '';
-              }}
-            />
           </div>
         )}
 

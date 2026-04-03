@@ -18,6 +18,10 @@ function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
+function clampDesktopSidebarWidth(value: number) {
+  return Math.max(10, Math.min(30, value));
+}
+
 const Index = () => {
   useThemeTime();
   const { user, session, loading, signInWithGoogle, signOut } = useAuth();
@@ -37,12 +41,13 @@ const Index = () => {
   const [sidebarWidthPercent, setSidebarWidthPercent] = useState(18);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const initialRouteSyncedRef = useRef(false);
+  const desktopSidebarWidthRef = useRef(18);
   const isMobile = useIsMobile();
 
   const isLoggedIn = Boolean(session?.user?.id);
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
   const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile ? sidebarWidthPercent : 0;
-  const showChrome = !isCanvasLoading;
+  const showHeaderAndBars = !isCanvasLoading;
 
   useEffect(() => {
     if (!session?.user?.id || initialRouteSyncedRef.current) return;
@@ -76,9 +81,19 @@ const Index = () => {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    if (!isMobile) return;
-    setSidebarWidthPercent(70);
+    if (isMobile) {
+      desktopSidebarWidthRef.current = clampDesktopSidebarWidth(sidebarWidthPercent);
+      setSidebarWidthPercent(70);
+      return;
+    }
+
+    setSidebarWidthPercent(clampDesktopSidebarWidth(desktopSidebarWidthRef.current || 18));
   }, [isMobile]);
+
+  useEffect(() => {
+    if (isMobile) return;
+    desktopSidebarWidthRef.current = clampDesktopSidebarWidth(sidebarWidthPercent);
+  }, [isMobile, sidebarWidthPercent]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -106,16 +121,22 @@ const Index = () => {
       if (code === 'KeyI') { e.preventDefault(); store.setActiveTool('line'); return; }
       if (code === 'KeyA') { e.preventDefault(); store.setActiveTool('arrow'); return; }
       if (code === 'KeyC') {
-        const selected = store.blocks.find((block) => block.id === store.selectedBlockId);
-        if (!selected) {
-          toast.info('Select a canvas block to copy');
+        const selected = store.blocks.filter((block) => store.selectedBlockIds.includes(block.id));
+        if (!selected.length) {
+          const single = store.blocks.find((block) => block.id === store.selectedBlockId);
+          if (single) {
+            selected.push(single);
+          }
+        }
+        if (!selected.length) {
+          toast.info('Select a canvas component to copy');
           return;
         }
-        const payload = JSON.stringify({ type: 'cnvs-block', block: selected });
+        const payload = JSON.stringify({ type: 'cnvs-blocks', blocks: selected });
         localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, payload);
         void navigator.clipboard.writeText(payload).catch(() => undefined);
         e.preventDefault();
-        toast.success('Canvas block copied');
+        toast.success('Canvas component copied');
         return;
       }
 
@@ -134,7 +155,7 @@ const Index = () => {
         leftOffsetPercent={canvasLeftOffsetPercent}
         loading={isCanvasLoading}
       />
-      {showChrome && (
+      {showHeaderAndBars && (
         <AppHeader
           user={user}
           loading={loading}
@@ -148,7 +169,7 @@ const Index = () => {
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
         />
       )}
-      {showChrome && isSidebarOpen && (
+      {isSidebarOpen && (
         <>
           {isMobile && (
             <div
@@ -172,14 +193,23 @@ const Index = () => {
           />
         </>
       )}
-      {showChrome && <Toolbar leftOffsetPercent={canvasLeftOffsetPercent} isMobile={isMobile} />}
-      {showChrome && <ToolSettingsPanel />}
+      {showHeaderAndBars && <Toolbar leftOffsetPercent={canvasLeftOffsetPercent} isMobile={isMobile} />}
+      {showHeaderAndBars && <ToolSettingsPanel />}
       {/* Made by Nishant */}
-      {showChrome && (
-      <div className="fixed bottom-3 right-4 z-50 px-3 py-1.5 bg-secondary/60 border border-border select-none pointer-events-none">
-        <span className="text-[9px] font-mono text-muted-foreground block leading-tight">made by</span>
-        <span className="text-[11px] font-mono font-bold text-foreground block leading-tight">Nishant</span>
-      </div>
+      {showHeaderAndBars && (
+        isMobile ? (
+          <div
+            className="fixed right-0 z-50 px-1 py-2 bg-secondary/60 border border-border border-r-0 select-none pointer-events-none"
+            style={{ bottom: 'calc(1rem + 44px)' }}
+          >
+            <span className="block text-[9px] font-mono font-bold text-foreground [writing-mode:vertical-rl] tracking-wider">made by nishant</span>
+          </div>
+        ) : (
+          <div className="fixed bottom-4 right-4 z-50 px-3 py-1.5 bg-secondary/60 border border-border select-none pointer-events-none">
+            <span className="text-[9px] font-mono text-muted-foreground block leading-tight">made by</span>
+            <span className="text-[11px] font-mono font-bold text-foreground block leading-tight">Nishant</span>
+          </div>
+        )
       )}
     </>
   );

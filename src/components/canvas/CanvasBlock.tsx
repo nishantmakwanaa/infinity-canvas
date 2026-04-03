@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useCanvasStore, CanvasBlock } from '@/store/canvasStore';
 import { NoteBlock } from './blocks/NoteBlock';
 import { LinkBlock } from './blocks/LinkBlock';
@@ -14,8 +14,9 @@ interface Props {
 type ResizeDir = 'n' | 's' | 'e' | 'w';
 
 function CanvasBlockComponentImpl({ block, readOnly }: Props) {
-  const { updateBlock, deleteBlock, selectBlock, selectedBlockId, zoom } = useCanvasStore();
-  const isSelected = selectedBlockId === block.id;
+  const { updateBlock, deleteBlock, selectBlock, selectedBlockId, selectedBlockIds, zoom } = useCanvasStore();
+  const isSelected = selectedBlockId === block.id || selectedBlockIds.includes(block.id);
+  const [isHovered, setIsHovered] = useState(false);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, origX: 0, origY: 0 });
 
   const handleDragStart = (e: React.MouseEvent) => {
@@ -76,6 +77,8 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
       className={`absolute block-base select-none ${isSelected && !readOnly ? 'ring-2 ring-foreground ring-offset-1' : ''}`}
       style={{ left: block.x, top: block.y, width: block.width, height: block.height }}
       onMouseDown={handleDragStart}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
       <div className={`flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 ${readOnly ? '' : 'cursor-move'}`}>
         <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">{typeLabel}</span>
@@ -89,13 +92,13 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
         {renderContent()}
       </div>
 
-      {/* Resize handles - middle of each side */}
-      {!readOnly && isSelected && (
+      {/* Resize handles - full side edges (no corner directions) */}
+      {!readOnly && (isSelected || isHovered) && (
         <>
-          <div data-resize="true" className="absolute top-0 left-1/2 -translate-x-1/2 h-2 w-10 cursor-n-resize" onMouseDown={(e) => handleResize(e, 'n')} />
-          <div data-resize="true" className="absolute bottom-0 left-1/2 -translate-x-1/2 h-2 w-10 cursor-s-resize" onMouseDown={(e) => handleResize(e, 's')} />
-          <div data-resize="true" className="absolute left-0 top-1/2 -translate-y-1/2 w-2 h-10 cursor-w-resize" onMouseDown={(e) => handleResize(e, 'w')} />
-          <div data-resize="true" className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-10 cursor-e-resize" onMouseDown={(e) => handleResize(e, 'e')} />
+          <div data-resize="true" className="absolute top-0 left-2 right-2 h-3 cursor-n-resize hover:bg-foreground/10" onMouseDown={(e) => handleResize(e, 'n')} />
+          <div data-resize="true" className="absolute bottom-0 left-2 right-2 h-3 cursor-s-resize hover:bg-foreground/10" onMouseDown={(e) => handleResize(e, 's')} />
+          <div data-resize="true" className="absolute left-0 top-2 bottom-2 w-3 cursor-w-resize hover:bg-foreground/10" onMouseDown={(e) => handleResize(e, 'w')} />
+          <div data-resize="true" className="absolute right-0 top-2 bottom-2 w-3 cursor-e-resize hover:bg-foreground/10" onMouseDown={(e) => handleResize(e, 'e')} />
         </>
       )}
     </div>
