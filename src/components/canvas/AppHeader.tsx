@@ -1,8 +1,7 @@
-import { LogOut, User as UserIcon, Download, MoreVertical, PanelLeftClose, PanelLeftOpen, Share2, ChevronDown } from 'lucide-react';
+import { LogOut, User as UserIcon, MoreVertical, PanelLeftClose, PanelLeftOpen, Share2, ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { exportCanvasAsCnvs, exportCanvasAsPng, exportCanvasAsSvg } from '@/lib/export';
 import { AppMenu } from './AppMenu';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -63,7 +62,6 @@ export function AppHeader({
   const [showProfile, setShowProfile] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
-  const [showExport, setShowExport] = useState(false);
   const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
   const [showQrDialog, setShowQrDialog] = useState(false);
   const [showPageMenu, setShowPageMenu] = useState(false);
@@ -331,26 +329,10 @@ export function AppHeader({
           </div>
         </div>
         <div className="flex items-center gap-2">
-        {user ? (
+        {user && (
           <button onClick={handleOpenQrShare} disabled={sharing} className="toolbar-btn" title="Share canvas">
             <Share2 size={14} />
           </button>
-        ) : (
-          <div className="relative">
-            <button onClick={() => setShowExport(!showExport)} className="toolbar-btn" title="Export">
-              <Download size={14} />
-            </button>
-            {showExport && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowExport(false)} />
-                <div className="absolute right-0 top-11 z-50 w-32 border border-border bg-card">
-                  <button onClick={() => { exportCanvasAsPng(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
-                  <button onClick={() => { exportCanvasAsSvg(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
-                  <button onClick={() => { exportCanvasAsCnvs(); setShowExport(false); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
-                </div>
-              </>
-            )}
-          </div>
         )}
 
         {loading ? null : !user ? (

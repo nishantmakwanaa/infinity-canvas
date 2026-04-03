@@ -223,6 +223,12 @@ const Index = () => {
   }, [showUnauthorizedOwnerRoute, session?.user?.id, params.canvasName, params.pageName, params.username, selectCanvasByName, selectCanvasByRoute]);
 
   useEffect(() => {
+    if (!isLoggedIn && isDirectOwnerCanvasRoute) {
+      navigate('/', { replace: true });
+    }
+  }, [isLoggedIn, isDirectOwnerCanvasRoute, navigate]);
+
+  useEffect(() => {
     if (!isLoggedIn || !currentCanvasName) {
       document.title = DEFAULT_SITE_TITLE;
       return;
