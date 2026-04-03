@@ -39,7 +39,10 @@ export function useAuth() {
   }, [extractUser]);
 
   const signInWithGoogle = async () => {
-    const redirectTo = `${window.location.origin}/`;
+    const configuredRedirect = import.meta.env.VITE_AUTH_REDIRECT_TO?.trim();
+    const redirectTo = configuredRedirect && configuredRedirect.length > 0
+      ? configuredRedirect
+      : `${window.location.origin}/`;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
