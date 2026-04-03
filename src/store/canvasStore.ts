@@ -24,13 +24,13 @@ export interface CanvasBlock {
 
 export type DrawingElement =
   | { id: string; type: 'freehand'; points: { x: number; y: number }[]; color: string; strokeWidth: number }
-  | { id: string; type: 'rectangle' | 'ellipse'; x: number; y: number; w: number; h: number; color: string; strokeWidth: number }
+  | { id: string; type: 'rectangle' | 'ellipse' | 'triangle' | 'hexagon' | 'oval' | 'diamond' | 'star' | 'cloud' | 'heart'; x: number; y: number; w: number; h: number; color: string; strokeWidth: number }
   | { id: string; type: 'text'; x: number; y: number; content: string; color: string; fontSize: number; fontFamily: string }
   | { id: string; type: 'line' | 'arrow'; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number };
 
 export type SizeOption = 'S' | 'M' | 'L' | 'XL';
 export type FontOption = 'default' | 'sans' | 'serif' | 'mono';
-export type ShapeOption = 'rectangle' | 'ellipse';
+export type ShapeOption = 'rectangle' | 'ellipse' | 'triangle' | 'hexagon' | 'oval' | 'diamond' | 'star' | 'cloud' | 'heart';
 
 export interface ToolSettings {
   color: string;

@@ -16,6 +16,8 @@ const App = () => (
       <HashRouter>
         <Routes>
           <Route path="/" element={<Index />} />
+          <Route path="/:username/:canvasName" element={<Index />} />
+          <Route path="/:username/view/:canvasName" element={<SharedCanvas />} />
           <Route path="/view/:token" element={<SharedCanvas />} />
           <Route path="/manual" element={<Manual />} />
           <Route path="*" element={<NotFound />} />

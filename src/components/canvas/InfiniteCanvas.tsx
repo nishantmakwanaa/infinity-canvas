@@ -65,7 +65,7 @@ export function InfiniteCanvas({ readOnly }: Props) {
     <div
       ref={containerRef}
       data-canvas="true"
-      className="fixed inset-0 canvas-dots overflow-hidden cursor-grab active:cursor-grabbing select-none"
+      className={`fixed inset-0 canvas-dots overflow-hidden select-none ${isDrawing ? 'cursor-crosshair' : 'cursor-default'}`}
       style={dotOffset}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

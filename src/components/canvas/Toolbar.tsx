@@ -1,5 +1,5 @@
 import { useCanvasStore, type BlockType } from '@/store/canvasStore';
-import { StickyNote, Link, CheckSquare, Film, Pencil, Eraser, Type, Square, Minus, ArrowRight, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import { StickyNote, Link, CheckSquare, Film, Pencil, Eraser, Type, Square, Minus, ArrowRight, ZoomIn, ZoomOut, Maximize, MousePointer2 } from 'lucide-react';
 
 export function Toolbar() {
   const { addBlock, zoom, setZoom, setPan, activeTool, setActiveTool } = useCanvasStore();
@@ -44,6 +44,13 @@ export function Toolbar() {
 
       {/* Main toolbar - center */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-px border border-border bg-card shadow-lg">
+        <button
+          className={`inline-flex items-center justify-center w-11 h-11 border-r border-border transition-colors ${activeTool === 'select' ? 'bg-foreground text-background' : 'bg-card text-foreground hover:bg-accent'}`}
+          title="Cursor"
+          onClick={() => setActiveTool('select')}
+        >
+          <MousePointer2 size={18} />
+        </button>
         {blockTools.map(({ icon: Icon, id, label }) => (
           <button
             key={id}

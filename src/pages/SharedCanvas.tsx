@@ -8,22 +8,35 @@ import { ZoomIn, ZoomOut, Maximize } from 'lucide-react';
 
 export default function SharedCanvas() {
   useThemeTime();
-  const { token } = useParams<{ token: string }>();
+  const { token, canvasName } = useParams<{ token?: string; canvasName?: string }>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const { zoom, setZoom, setPan } = useCanvasStore();
 
   useEffect(() => {
-    if (!token) return;
-
     const load = async () => {
-      const { data: shared } = await supabase
-        .from('shared_canvases')
-        .select('canvas_id')
-        .eq('share_token', token)
-        .single();
+      let canvasId: string | null = null;
 
-      if (!shared) {
+      if (token) {
+        const { data: shared } = await supabase
+          .from('shared_canvases')
+          .select('canvas_id')
+          .eq('share_token', token)
+          .single();
+        canvasId = shared?.canvas_id || null;
+      } else if (canvasName) {
+        const decodedName = decodeURIComponent(canvasName);
+        const { data: sharedByName } = await supabase
+          .from('canvases')
+          .select('id')
+          .eq('name', decodedName)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        canvasId = sharedByName?.id || null;
+      }
+
+      if (!canvasId) {
         setError('Canvas not found or link expired');
         setLoading(false);
         return;
@@ -32,7 +45,7 @@ export default function SharedCanvas() {
       const { data: canvas } = await supabase
         .from('canvases')
         .select('*')
-        .eq('id', shared.canvas_id)
+        .eq('id', canvasId)
         .single();
 
       if (!canvas) {
@@ -50,7 +63,7 @@ export default function SharedCanvas() {
     };
 
     load();
-  }, [token]);
+  }, [token, canvasName]);
 
   if (loading) {
     return (

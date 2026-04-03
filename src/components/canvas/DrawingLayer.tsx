@@ -8,6 +8,60 @@ function pointsToPath(pts: { x: number; y: number }[]): string {
   return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
 }
 
+function shapePath(type: string, x: number, y: number, w: number, h: number): string {
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const rx = Math.max(1, w / 2);
+  const ry = Math.max(1, h / 2);
+  switch (type) {
+    case 'triangle':
+      return `M ${cx} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`;
+    case 'hexagon': {
+      const dx = w * 0.25;
+      return `M ${x + dx} ${y} L ${x + w - dx} ${y} L ${x + w} ${cy} L ${x + w - dx} ${y + h} L ${x + dx} ${y + h} L ${x} ${cy} Z`;
+    }
+    case 'oval':
+      return `M ${cx - rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx + rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx - rx} ${cy} Z`;
+    case 'diamond':
+      return `M ${cx} ${y} L ${x + w} ${cy} L ${cx} ${y + h} L ${x} ${cy} Z`;
+    case 'star': {
+      const outer = Math.min(rx, ry);
+      const inner = outer * 0.45;
+      const points: string[] = [];
+      for (let i = 0; i < 10; i += 1) {
+        const angle = -Math.PI / 2 + i * (Math.PI / 5);
+        const r = i % 2 === 0 ? outer : inner;
+        points.push(`${cx + r * Math.cos(angle)} ${cy + r * Math.sin(angle)}`);
+      }
+      return `M ${points[0]} L ${points.slice(1).join(' L ')} Z`;
+    }
+    case 'cloud': {
+      const p1 = `${x + w * 0.18} ${y + h * 0.7}`;
+      return [
+        `M ${p1}`,
+        `C ${x + w * 0.05} ${y + h * 0.7}, ${x + w * 0.05} ${y + h * 0.45}, ${x + w * 0.22} ${y + h * 0.45}`,
+        `C ${x + w * 0.2} ${y + h * 0.2}, ${x + w * 0.45} ${y + h * 0.1}, ${x + w * 0.58} ${y + h * 0.3}`,
+        `C ${x + w * 0.78} ${y + h * 0.2}, ${x + w * 0.95} ${y + h * 0.38}, ${x + w * 0.88} ${y + h * 0.58}`,
+        `C ${x + w * 0.95} ${y + h * 0.7}, ${x + w * 0.8} ${y + h * 0.85}, ${x + w * 0.65} ${y + h * 0.8}`,
+        `L ${x + w * 0.3} ${y + h * 0.8}`,
+        `C ${x + w * 0.24} ${y + h * 0.84}, ${x + w * 0.14} ${y + h * 0.8}, ${x + w * 0.18} ${y + h * 0.7}`,
+        'Z',
+      ].join(' ');
+    }
+    case 'heart':
+      return [
+        `M ${cx} ${y + h * 0.9}`,
+        `C ${x + w * 0.1} ${y + h * 0.62}, ${x + w * 0.03} ${y + h * 0.3}, ${x + w * 0.24} ${y + h * 0.2}`,
+        `C ${x + w * 0.4} ${y + h * 0.12}, ${cx} ${y + h * 0.24}, ${cx} ${y + h * 0.35}`,
+        `C ${cx} ${y + h * 0.24}, ${x + w * 0.6} ${y + h * 0.12}, ${x + w * 0.76} ${y + h * 0.2}`,
+        `C ${x + w * 0.97} ${y + h * 0.3}, ${x + w * 0.9} ${y + h * 0.62}, ${cx} ${y + h * 0.9}`,
+        'Z',
+      ].join(' ');
+    default:
+      return '';
+  }
+}
+
 function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement; onDelete?: (id: string) => void }) {
   const common = { onClick: onDelete ? () => onDelete(element.id) : undefined };
 
@@ -18,6 +72,14 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
       return <rect x={element.x} y={element.y} width={element.w} height={element.h} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
     case 'ellipse':
       return <ellipse cx={element.x + element.w / 2} cy={element.y + element.h / 2} rx={Math.abs(element.w) / 2} ry={Math.abs(element.h) / 2} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
+    case 'triangle':
+    case 'hexagon':
+    case 'oval':
+    case 'diamond':
+    case 'star':
+    case 'cloud':
+    case 'heart':
+      return <path d={shapePath(element.type, element.x, element.y, Math.abs(element.w), Math.abs(element.h))} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
     case 'text':
       return <text x={element.x} y={element.y} fill={element.color} fontSize={element.fontSize} fontFamily={element.fontFamily} {...common} style={onDelete ? { cursor: 'pointer' } : {}}>{element.content}</text>;
     case 'line':
@@ -162,9 +224,19 @@ export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
 
           {/* Preview: shape */}
           {activeTool === 'shape' && drawStart && drawEnd && (
-            toolSettings.shapeType === 'rectangle'
-              ? <rect x={Math.min(drawStart.x, drawEnd.x)} y={Math.min(drawStart.y, drawEnd.y)} width={Math.abs(drawEnd.x - drawStart.x)} height={Math.abs(drawEnd.y - drawStart.y)} fill="none" stroke={toolSettings.color} strokeWidth={strokeW} opacity={0.5} strokeDasharray="4" />
-              : <ellipse cx={(drawStart.x + drawEnd.x) / 2} cy={(drawStart.y + drawEnd.y) / 2} rx={Math.abs(drawEnd.x - drawStart.x) / 2} ry={Math.abs(drawEnd.y - drawStart.y) / 2} fill="none" stroke={toolSettings.color} strokeWidth={strokeW} opacity={0.5} strokeDasharray="4" />
+            (() => {
+              const x = Math.min(drawStart.x, drawEnd.x);
+              const y = Math.min(drawStart.y, drawEnd.y);
+              const w = Math.abs(drawEnd.x - drawStart.x);
+              const h = Math.abs(drawEnd.y - drawStart.y);
+              if (toolSettings.shapeType === 'rectangle') {
+                return <rect x={x} y={y} width={w} height={h} fill="none" stroke={toolSettings.color} strokeWidth={strokeW} opacity={0.5} strokeDasharray="4" />;
+              }
+              if (toolSettings.shapeType === 'ellipse') {
+                return <ellipse cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill="none" stroke={toolSettings.color} strokeWidth={strokeW} opacity={0.5} strokeDasharray="4" />;
+              }
+              return <path d={shapePath(toolSettings.shapeType, x, y, w, h)} fill="none" stroke={toolSettings.color} strokeWidth={strokeW} opacity={0.5} strokeDasharray="4" />;
+            })()
           )}
 
           {/* Preview: line/arrow */}

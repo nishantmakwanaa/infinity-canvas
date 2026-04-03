@@ -17,9 +17,15 @@ interface AppHeaderProps {
   loading: boolean;
   onSignIn: () => void;
   onSignOut: () => void;
+  currentCanvasId?: string | null;
+  currentCanvasName?: string | null;
 }
 
-export function AppHeader({ user, loading, onSignIn, onSignOut }: AppHeaderProps) {
+function slugifyUsername(value: string) {
+  return value.toLowerCase().trim().replace(/\s+/g, '-');
+}
+
+export function AppHeader({ user, loading, onSignIn, onSignOut, currentCanvasId, currentCanvasName }: AppHeaderProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
@@ -29,13 +35,15 @@ export function AppHeader({ user, loading, onSignIn, onSignOut }: AppHeaderProps
     if (!user) return;
     setSharing(true);
     try {
-      const { data: canvas } = await supabase
-        .from('canvases')
-        .select('id')
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .single();
+      const canvas = currentCanvasId
+        ? { id: currentCanvasId }
+        : (await supabase
+          .from('canvases')
+          .select('id')
+          .eq('user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .single()).data;
 
       if (!canvas) { toast.error('No canvas found'); setSharing(false); return; }
 
@@ -57,7 +65,11 @@ export function AppHeader({ user, loading, onSignIn, onSignOut }: AppHeaderProps
         token = newShare?.share_token || '';
       }
 
-      const shareUrl = `${window.location.origin}/#/view/${token}`;
+      const usernameSlug = slugifyUsername(user.username || 'user');
+      const canvasSlug = encodeURIComponent((currentCanvasName || '').trim());
+      const shareUrl = canvasSlug
+        ? `${window.location.origin}/#/${usernameSlug}/view/${canvasSlug}`
+        : `${window.location.origin}/#/view/${token}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success('Share link copied!');
     } catch { toast.error('Failed to share'); }
