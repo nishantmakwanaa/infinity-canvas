@@ -462,7 +462,8 @@ grant execute on function public.upsert_canvas_share(uuid, text) to authenticate
 --   /<userToken>?<canvasToken>=<pageToken>.page
 -- userToken prefix:
 --   pg => owner route
---   sh => shared route (viewer/editor access by share_access)
+--   sh => shared view route (always readonly)
+--   se => shared edit route (requires login, plus editor access for non-owner)
 drop function if exists public.open_page_api_link(text);
 drop function if exists public.open_page_api_link(text, text, text);
 
@@ -503,6 +504,7 @@ declare
   v_share_left text;
   v_share_right text;
   v_share_token text;
+  v_share_requires_editor boolean := false;
   v_canvas text;
   v_page text;
 begin
@@ -512,7 +514,8 @@ begin
 
   v_prefix := left(v_user_token, 2);
 
-  if v_prefix = 'sh' then
+  if v_prefix in ('sh', 'se') then
+    v_share_requires_editor := (v_prefix = 'se');
     v_owner_identity := public.decode_hex_to_text(substr(v_user_token, 3));
     if btrim(coalesce(v_owner_identity, '')) = '' then
       return;
@@ -547,7 +550,11 @@ begin
           case when position('/' in c.name) > 0 then split_part(c.name, '/', 2) else 'page-1.cnvs' end as page_name,
           true as is_share,
           sc.access_level as share_access,
-          auth.uid() is not null and (auth.uid() = c.user_id or sc.access_level = 'editor') as can_edit,
+          (
+            v_share_requires_editor
+            and auth.uid() is not null
+            and (auth.uid() = c.user_id or sc.access_level = 'editor')
+          ) as can_edit,
           c.blocks,
           c.drawings,
           c.pan_x,

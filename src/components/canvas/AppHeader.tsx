@@ -6,7 +6,7 @@ import { AppMenu } from './AppMenu';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { parseCanvasRouteName } from '@/lib/canvasNaming';
-import { toOwnerPagePath, toPageApiUrl, toSharePagePath } from '@/lib/pageApi';
+import { toEditSharePagePath, toOwnerPagePath, toPageApiUrl, toSharePagePath } from '@/lib/pageApi';
 
 interface AuthUser {
   id: string;
@@ -89,6 +89,8 @@ export function AppHeader({
   const [renamingCanvas, setRenamingCanvas] = useState(false);
   const [renamingPage, setRenamingPage] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
+  const [viewShareUrl, setViewShareUrl] = useState('');
+  const [editShareUrl, setEditShareUrl] = useState('');
   const isMobile = useIsMobile();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
@@ -190,9 +192,13 @@ export function AppHeader({
       }
 
       const resolvedAccess = ((upsertedShare as any)?.access_level as 'viewer' | 'editor' | undefined) || accessLevel;
-      const nextShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, shareToken, user.id));
+      const nextViewShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, shareToken, user.id));
+      const nextEditShareUrl = toPageApiUrl(toEditSharePagePath(context.routeOwner, shareToken, user.id));
+      const nextShareUrl = resolvedAccess === 'editor' ? nextEditShareUrl : nextViewShareUrl;
 
       setShareAccessLevel(resolvedAccess);
+      setViewShareUrl(nextViewShareUrl);
+      setEditShareUrl(nextEditShareUrl);
       setShareUrl(nextShareUrl);
       setIsPublished(true);
       return nextShareUrl;
@@ -222,6 +228,8 @@ export function AppHeader({
       }
 
       setIsPublished(false);
+      setViewShareUrl('');
+      setEditShareUrl('');
       setShareUrl('');
       toast.success('Unpublished');
       return true;
@@ -243,13 +251,20 @@ export function AppHeader({
 
     if (!data?.share_token) {
       setIsPublished(false);
+      setViewShareUrl('');
+      setEditShareUrl('');
       setShareUrl('');
       setShareAccessLevel('viewer');
       return;
     }
 
-    const nextShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, (data as any).share_token, user.id));
-    setShareAccessLevel((((data as any).access_level as 'viewer' | 'editor') || 'viewer'));
+    const resolvedAccess = (((data as any).access_level as 'viewer' | 'editor') || 'viewer');
+    const nextViewShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, (data as any).share_token, user.id));
+    const nextEditShareUrl = toPageApiUrl(toEditSharePagePath(context.routeOwner, (data as any).share_token, user.id));
+    const nextShareUrl = resolvedAccess === 'editor' ? nextEditShareUrl : nextViewShareUrl;
+    setShareAccessLevel(resolvedAccess);
+    setViewShareUrl(nextViewShareUrl);
+    setEditShareUrl(nextEditShareUrl);
     setIsPublished(true);
     setShareUrl(nextShareUrl);
   };
@@ -569,7 +584,7 @@ export function AppHeader({
                   <span className="text-[11px] font-mono text-foreground">Active editors</span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
                     {collaborationConnected ? <Wifi size={10} /> : <WifiOff size={10} />}
-                    {collaborationConnected ? 'Live' : 'Reconnecting'}
+                    {collaborationConnected ? 'Live' : ''}
                   </span>
                 </div>
                 {collaborators.length === 0 ? (
@@ -676,6 +691,16 @@ export function AppHeader({
                     Copy link
                   </button>
                 </div>
+                {isPublished && (
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-mono text-muted-foreground break-all border border-border p-2">
+                      <span className="text-foreground">View URL:</span> {viewShareUrl}
+                    </div>
+                    <div className="text-[10px] font-mono text-muted-foreground break-all border border-border p-2">
+                      <span className="text-foreground">Edit URL:</span> {editShareUrl}
+                    </div>
+                  </div>
+                )}
                 {shareUrl && (
                   <div className="border border-border p-2 text-[10px] font-mono text-muted-foreground break-all">{shareUrl}</div>
                 )}

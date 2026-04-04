@@ -2,6 +2,7 @@ import { parseCanvasRouteName } from '@/lib/canvasNaming';
 
 const OWNER_TOKEN_PREFIX = 'pg';
 const SHARE_TOKEN_PREFIX = 'sh';
+const SHARE_EDIT_TOKEN_PREFIX = 'se';
 
 function toBase64Url(input: string) {
   const bytes = new TextEncoder().encode(input);
@@ -86,6 +87,17 @@ export function toSharePagePath(ownerUsername: string, shareToken: string, owner
   return `/${userToken}?${canvasToken}=${pageSegment}`;
 }
 
+export function toEditSharePagePath(ownerUsername: string, shareToken: string, ownerUserId?: string | null) {
+  const compactShareToken = shareToken.trim().toLowerCase();
+  const splitAt = Math.max(1, Math.floor(compactShareToken.length / 2));
+  const left = compactShareToken.slice(0, splitAt);
+  const right = compactShareToken.slice(splitAt);
+  const userToken = `${SHARE_EDIT_TOKEN_PREFIX}${encodeSegment(buildOwnerIdentity(ownerUsername, ownerUserId))}`;
+  const canvasToken = left;
+  const pageSegment = `${right}.page`;
+  return `/${userToken}?${canvasToken}=${pageSegment}`;
+}
+
 export function getPageApiOrigin() {
   const configured = import.meta.env.VITE_PAGE_API_ORIGIN?.trim();
   return configured && configured.length ? configured : window.location.origin;
@@ -104,6 +116,8 @@ export function parseSegmentedApiRequest(rawUserToken?: string | null, rawSearch
     ? 'owner'
     : userToken.startsWith(SHARE_TOKEN_PREFIX)
       ? 'share'
+      : userToken.startsWith(SHARE_EDIT_TOKEN_PREFIX)
+        ? 'share-edit'
       : null;
   if (!kind) return null;
 
@@ -124,7 +138,7 @@ export function parseSegmentedApiRequest(rawUserToken?: string | null, rawSearch
     return null;
   }
 
-  if (kind === 'share') {
+  if (kind === 'share' || kind === 'share-edit') {
     const isRawShareToken = /^[0-9a-f]+$/i.test(canvasToken) && /^[0-9a-f]+$/i.test(pageToken);
     if (isRawShareToken) {
       return {

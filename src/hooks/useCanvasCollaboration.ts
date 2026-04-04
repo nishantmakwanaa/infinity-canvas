@@ -44,6 +44,12 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   const clientIdRef = useRef<string>(`client-${Math.random().toString(36).slice(2, 10)}`);
   const applyRemoteRef = useRef(false);
   const lastBroadcastRef = useRef<any>(null);
+  const latestRemoteSnapshotRef = useRef<Record<string, {
+    blocks: CanvasBlock[];
+    drawings: DrawingElement[];
+    pan: { x: number; y: number };
+    zoom: number;
+  }>>({});
   const sendTimeoutRef = useRef<number | null>(null);
   const visibilityRef = useRef<Record<string, boolean>>({});
 
@@ -97,10 +103,26 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
     });
   }, [identity]);
 
+  const applyStoredSnapshotForUser = useCallback((userId: string) => {
+    const snapshot = latestRemoteSnapshotRef.current[userId];
+    if (!snapshot) return;
+    applyRemoteRef.current = true;
+    useCanvasStore.getState().applyRemoteSnapshot(
+      snapshot.blocks,
+      snapshot.pan,
+      typeof snapshot.zoom === 'number' ? snapshot.zoom : 1,
+      snapshot.drawings
+    );
+    window.setTimeout(() => {
+      applyRemoteRef.current = false;
+    }, 0);
+  }, []);
+
   useEffect(() => {
     if (!enabled || !canvasId || !identity?.id) {
       setIsConnected((prev) => (prev ? false : prev));
       setPresenceUsers((prev) => (prev.length ? [] : prev));
+      latestRemoteSnapshotRef.current = {};
       if (channelRef.current) {
         void supabase.removeChannel(channelRef.current);
         channelRef.current = null;
@@ -148,19 +170,18 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         const snapshot = payload?.snapshot;
 
         if (!senderId || senderId === identity.id || senderClientId === clientIdRef.current) return;
-        if (visibilityRef.current[senderId] === false) return;
         if (!snapshot || !Array.isArray(snapshot.blocks) || !Array.isArray(snapshot.drawings) || !snapshot.pan) return;
 
-        applyRemoteRef.current = true;
-        useCanvasStore.getState().applyRemoteSnapshot(
-          snapshot.blocks as CanvasBlock[],
-          snapshot.pan,
-          typeof snapshot.zoom === 'number' ? snapshot.zoom : 1,
-          snapshot.drawings as DrawingElement[]
-        );
-        window.setTimeout(() => {
-          applyRemoteRef.current = false;
-        }, 0);
+        latestRemoteSnapshotRef.current[senderId] = {
+          blocks: snapshot.blocks as CanvasBlock[],
+          drawings: snapshot.drawings as DrawingElement[],
+          pan: snapshot.pan,
+          zoom: typeof snapshot.zoom === 'number' ? snapshot.zoom : 1,
+        };
+
+        if (visibilityRef.current[senderId] === false) return;
+
+        applyStoredSnapshotForUser(senderId);
       });
 
     channel.subscribe((status: string) => {
@@ -208,20 +229,27 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
       }
       setIsConnected((prev) => (prev ? false : prev));
       setPresenceUsers((prev) => (prev.length ? [] : prev));
+      latestRemoteSnapshotRef.current = {};
       if (channelRef.current) {
         void supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
     };
-  }, [broadcastSnapshot, canvasId, enabled, identity, sendPresence]);
+  }, [applyStoredSnapshotForUser, broadcastSnapshot, canvasId, enabled, identity, sendPresence]);
 
   const toggleUserVisibility = useCallback((userId: string) => {
+    const willShow = visibilityRef.current[userId] === false;
     setVisibilityMap((prev) => ({
       ...prev,
       [userId]: prev[userId] === false,
     }));
     setPresenceUsers((prev) => prev.map((item) => item.userId === userId ? { ...item, isVisible: !(item.isVisible) } : item));
-  }, []);
+    if (willShow) {
+      window.setTimeout(() => {
+        applyStoredSnapshotForUser(userId);
+      }, 0);
+    }
+  }, [applyStoredSnapshotForUser]);
 
   const collaborators = useMemo(() => {
     return presenceUsers.map((entry) => ({

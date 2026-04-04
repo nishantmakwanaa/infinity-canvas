@@ -300,7 +300,10 @@ const Index = () => {
 
       const shareAccess = String((row as any)?.share_access || '').toLowerCase();
       const isShareRoute = Boolean((row as any)?.is_share);
-      const canEdit = Boolean(row.can_edit) || Boolean(session?.user?.id && isShareRoute && shareAccess === 'editor');
+      const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
+      const canEdit = isShareRoute
+        ? Boolean(isShareEditLink && session?.user?.id && (Boolean(row.can_edit) || shareAccess === 'editor'))
+        : Boolean(row.can_edit);
       setRouteCanvasId(row.canvas_id);
       const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
       setRouteCanvasName(resolvedName);
