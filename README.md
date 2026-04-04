@@ -1,11 +1,12 @@
 # CNVS - Infinite Canvas Workspace
 
 CNVS is a collaborative, page-based infinite canvas for organizing notes, links, todos, media, and sketches in one visual workspace.
+It is positioned as an alternative and competitor to tldraw.com for teams that want persistent, permissioned, page-aware canvases backed by Supabase.
 
 It supports:
-- Owner routes: `/:username/:canvasName/:pageName`
-- Shared routes: `/:username/view/:canvasName/:pageName`
-- Legacy token shares: `/view/:token`
+- Tokenized page API routes ending in `.page`
+- Owner and share links through compact URL-safe tokens
+- Public share permission modes: `viewer` and `editor`
 
 The app is built with React + TypeScript + Vite and uses Supabase for auth, persistence, routing helpers, and sharing.
 
@@ -17,10 +18,25 @@ The app is built with React + TypeScript + Vite and uses Supabase for auth, pers
 - Multiple pages inside a canvas group (`canvas-slug/page-x.cnvs`)
 - Per-page and per-canvas rename support
 - Owner + shared route resolution through Supabase RPC
+- Share popover in header (menu-style, not centered modal)
+- Publish as viewer/editor for signed-in users with link
+- Live collaborator presence list (users icon near share)
+- Per-collaborator eye toggle to show/hide incoming live changes
+- Realtime collaboration snapshots over Supabase Realtime channels
 - Keyboard shortcuts (Alt+Shift based)
 - Mobile-specific selector UX (overflow + settings trigger)
 - Export/import (`.cnvs`, PNG, SVG)
 - Offline-friendly guest snapshot and autosave behavior
+
+## Product Positioning (SEO Copy)
+
+CNVS is a collaborative infinite whiteboard app for individuals and teams who need a practical alternative to tldraw.com.
+
+- Build persistent knowledge canvases (not just temporary sketches)
+- Organize work into page-based canvas groups
+- Share with viewer/editor permissions
+- Collaborate live with presence and activity controls
+- Mix notes, links, todos, media, and freehand drawing in one workspace
 
 ## Tech Stack
 
@@ -103,6 +119,26 @@ Disable verbose logging:
 localStorage.removeItem('cnvs_perf_console')
 ```
 
+## Live Collaboration
+
+CNVS now supports live, multi-user collaboration for shared canvases.
+
+- Share button opens an anchored menu similar to the top-right 3-dot menu.
+- Owners can publish access mode:
+	- `Anyone can view`: link opens read-only mode.
+	- `Anyone can edit`: signed-in users with link can edit live.
+- When editor mode is enabled, a users icon appears near the share button.
+- Clicking users icon opens a live collaborators menu:
+	- Active users list with avatar/name/tool.
+	- Eye-on: include that user live updates.
+	- Eye-off: ignore that user live updates (focus on your own changes).
+
+Realtime behavior:
+
+- Presence heartbeat + tool/pan/zoom metadata sync.
+- Throttled canvas snapshot broadcast for low-latency collaboration.
+- Shared editor users can persist updates through Supabase RLS policy.
+
 ## Load Test Configuration
 
 Load tests are designed for pre-release throughput checks on a dedicated test canvas.
@@ -145,6 +181,10 @@ This migration includes:
 - `canvases` and `shared_canvases` tables
 - Route field sync triggers
 - Owner and shared route resolver RPC functions
+- Share permission RPC (`upsert_canvas_share`)
+- Share editor/viewer access control (`shared_canvases.access_level`)
+- Shared editor update policy for collaborative persistence
+- Compact token decode + high-volume lookup indexes
 - Row-level security policies
 
 ## Routing Model

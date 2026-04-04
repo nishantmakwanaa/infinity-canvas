@@ -7,6 +7,7 @@ const ZOOM_STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8] as const;
 interface ToolbarProps {
   leftOffsetPercent?: number;
   isMobile?: boolean;
+  allowedToolIds?: string[];
   showMobileSettingsButton?: boolean;
   isMobileSettingsOpen?: boolean;
   onToggleMobileSettings?: () => void;
@@ -21,6 +22,7 @@ interface ToolbarProps {
 export function Toolbar({
   leftOffsetPercent = 0,
   isMobile = false,
+  allowedToolIds,
   showMobileSettingsButton = false,
   isMobileSettingsOpen = false,
   onToggleMobileSettings,
@@ -60,13 +62,16 @@ export function Toolbar({
     ...blockTools.map((tool) => ({ ...tool, kind: 'block' as const })),
     ...drawTools.map((tool) => ({ ...tool, kind: 'draw' as const })),
   ];
+  const visibleTools = Array.isArray(allowedToolIds) && allowedToolIds.length
+    ? allTools.filter((tool) => allowedToolIds.includes(tool.id))
+    : allTools;
 
   const toolsThatNeedSettings = new Set(['pencil', 'shape', 'line', 'arrow', 'text', 'note', 'link', 'todo', 'media']);
 
   const hasMobileSettingsButton = isMobile && showMobileSettingsButton && Boolean(onToggleMobileSettings);
-  const mobileToolSlotCount = isMobile ? 7 : allTools.length;
-  const mobilePrimaryTools = isMobile ? allTools.slice(0, mobileToolSlotCount) : allTools;
-  const mobileOverflowTools = isMobile ? allTools.slice(mobileToolSlotCount) : [];
+  const mobileToolSlotCount = isMobile ? 7 : visibleTools.length;
+  const mobilePrimaryTools = isMobile ? visibleTools.slice(0, mobileToolSlotCount) : visibleTools;
+  const mobileOverflowTools = isMobile ? visibleTools.slice(mobileToolSlotCount) : [];
   const hasActionBar = Boolean(onUndo || onRedo || onCopy || onCut || onDelete);
 
   const handleBlockTool = (type: BlockType) => {

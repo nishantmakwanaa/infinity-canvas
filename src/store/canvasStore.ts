@@ -93,6 +93,7 @@ interface CanvasState {
   clearDrawings: () => void;
   clearCanvas: () => void;
   loadCanvas: (blocks: CanvasBlock[], pan: { x: number; y: number }, zoom: number, drawings?: DrawingElement[]) => void;
+  applyRemoteSnapshot: (blocks: CanvasBlock[], pan: { x: number; y: number }, zoom: number, drawings?: DrawingElement[]) => void;
 }
 
 const defaultSizes: Record<BlockType, { width: number; height: number }> = {
@@ -175,5 +176,20 @@ export const useCanvasStore = create<CanvasState>((set) => ({
       b.type === 'image' ? { ...b, type: 'media' as BlockType } : b
     );
     set({ blocks: migrated, pan, zoom, drawingElements: drawings || [], selectedBlockId: null, selectedBlockIds: [], activeTool: 'select' });
+  },
+
+  applyRemoteSnapshot: (blocks, pan, zoom, drawings) => {
+    const migrated = blocks.map((b: any) =>
+      b.type === 'image' ? { ...b, type: 'media' as BlockType } : b
+    );
+    set((state) => ({
+      blocks: migrated,
+      pan,
+      zoom: Math.min(8, Math.max(0.05, zoom)),
+      drawingElements: drawings || [],
+      selectedBlockId: state.selectedBlockId && migrated.some((b) => b.id === state.selectedBlockId) ? state.selectedBlockId : null,
+      selectedBlockIds: state.selectedBlockIds.filter((id) => migrated.some((b) => b.id === id)),
+      activeTool: state.activeTool,
+    }));
   },
 }));

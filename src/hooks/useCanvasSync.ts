@@ -148,6 +148,18 @@ function listPendingCanvasSyncKeysForUser(userId: string) {
   }
 }
 
+function isCanvasNameConflictError(error: any) {
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  return code === '23505' || message.includes('canvases_user_id_name_key') || message.includes('duplicate key');
+}
+
+function withCanvasNameAttempt(baseName: string, attempt: number) {
+  if (attempt <= 0) return baseName;
+  const parsed = parseCanvasRouteName(baseName);
+  return `${parsed.canvasSlug}-${attempt + 1}/${parsed.pageSlug}`;
+}
+
 export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOptions) {
   const enabled = options?.enabled ?? true;
   const canvasIdRef = useRef<string | null>(null);
@@ -156,6 +168,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const guestSaveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const lastGuestSignatureRef = useRef('');
   const pendingSyncCacheRef = useRef<Record<string, PendingCanvasSyncSnapshot>>({});
+  const permissionWarningShownRef = useRef(false);
   const isFlushingRemoteRef = useRef(false);
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
@@ -164,15 +177,71 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const [currentCanvasName, setCurrentCanvasName] = useState<string | null>(null);
   const [isCanvasLoading, setIsCanvasLoading] = useState(true);
 
+  const warnPermissionIssue = useCallback(() => {
+    if (permissionWarningShownRef.current) return;
+    permissionWarningShownRef.current = true;
+    toast.error('Supabase permission error (403). Apply latest DB migrations and sign in again.');
+  }, []);
+
+  const insertCanvasWithRetry = useCallback(async (
+    userId: string,
+    baseName: string,
+    payload?: Partial<{
+      blocks: CanvasBlock[];
+      drawings: DrawingElement[];
+      pan_x: number;
+      pan_y: number;
+      zoom: number;
+    }>,
+    mutateNameOnConflict = true
+  ) => {
+    const maxAttempts = mutateNameOnConflict ? 6 : 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const candidateName = mutateNameOnConflict ? withCanvasNameAttempt(baseName, attempt) : baseName;
+      const { data, error } = await supabase
+        .from('canvases')
+        .insert({
+          user_id: userId,
+          name: candidateName,
+          blocks: payload?.blocks || [],
+          drawings: payload?.drawings || [],
+          pan_x: payload?.pan_x ?? 0,
+          pan_y: payload?.pan_y ?? 0,
+          zoom: payload?.zoom ?? 1,
+        } as any)
+        .select('id,name,updated_at')
+        .single();
+
+      if (data?.id) return data as any;
+      if (!error) continue;
+      const status = Number((error as any)?.status || 0);
+      if (status === 401 || status === 403 || String((error as any)?.code || '') === '42501') {
+        warnPermissionIssue();
+      }
+      if (!mutateNameOnConflict || !isCanvasNameConflictError(error)) {
+        return null;
+      }
+    }
+    return null;
+  }, [warnPermissionIssue]);
+
   const refreshCanvases = useCallback(async (userId: string) => {
-    const { data } = await supabase
+    const { data, error, status } = await supabase
       .from('canvases')
       .select('id,name,updated_at')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false });
+    if (error) {
+      if (status === 401 || status === 403) {
+        // Keep prior local list and let auth/session recovery handle access restoration.
+        warnPermissionIssue();
+        return null;
+      }
+      return null;
+    }
     setCanvases((data || []) as CanvasMeta[]);
     return (data || []) as CanvasMeta[];
-  }, []);
+  }, [warnPermissionIssue]);
 
   const loadCanvasById = useCallback(async (canvasId: string, persistForUserId?: string) => {
     const seq = ++loadSeqRef.current;
@@ -221,6 +290,11 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     setIsCanvasLoading(true);
 
     const list = await refreshCanvases(userId);
+    if (!list) {
+      isLoadingRef.current = false;
+      setIsCanvasLoading(false);
+      return;
+    }
     if (wasAutoLoadCancelled()) {
       isLoadingRef.current = false;
       return;
@@ -241,19 +315,18 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     if (hasGuestEdits && guestSnapshot) {
       const canvasName = createDefaultCanvasRouteName();
-      const { data: importedCanvas } = await supabase
-        .from('canvases')
-        .insert({
-          user_id: userId,
-          name: canvasName,
+      const importedCanvas = await insertCanvasWithRetry(
+        userId,
+        canvasName,
+        {
           blocks: JSON.parse(JSON.stringify(guestSnapshot.blocks || [])),
           drawings: JSON.parse(JSON.stringify(guestSnapshot.drawings || [])),
           pan_x: guestSnapshot.pan.x,
           pan_y: guestSnapshot.pan.y,
           zoom: guestSnapshot.zoom,
-        } as any)
-        .select('id')
-        .single();
+        },
+        true
+      );
       if (importedCanvas?.id) {
         clearGuestSnapshot();
         await refreshCanvases(userId);
@@ -289,11 +362,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       }
     } else {
       const canvasName = createDefaultCanvasRouteName();
-      const { data: newCanvas } = await supabase
-        .from('canvases')
-        .insert({ user_id: userId, blocks: [], pan_x: 0, pan_y: 0, zoom: 1, name: canvasName })
-        .select()
-        .single();
+      const newCanvas = await insertCanvasWithRetry(userId, canvasName, undefined, true);
       if (newCanvas) {
         canvasIdRef.current = newCanvas.id;
         currentCanvasIdRef.current = newCanvas.id;
@@ -301,6 +370,18 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         writeLastOpenedCanvasId(userId, newCanvas.id);
         await refreshCanvases(userId);
         await loadCanvasById(newCanvas.id, userId);
+      } else {
+        // Last-resort fallback for fresh accounts so login always lands on a valid page.
+        const forcedName = `untitled-${Date.now()}/page-1.cnvs`;
+        const forcedCanvas = await insertCanvasWithRetry(userId, forcedName, undefined, false);
+        if (forcedCanvas?.id) {
+          canvasIdRef.current = forcedCanvas.id;
+          currentCanvasIdRef.current = forcedCanvas.id;
+          setCurrentCanvasId(forcedCanvas.id);
+          writeLastOpenedCanvasId(userId, forcedCanvas.id);
+          await refreshCanvases(userId);
+          await loadCanvasById(forcedCanvas.id, userId);
+        }
       }
     }
     isLoadingRef.current = false;
@@ -314,11 +395,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     setIsCanvasLoading(true);
 
     const canvasName = name?.trim() || createDefaultCanvasRouteName();
-    const { data: newCanvas } = await supabase
-      .from('canvases')
-      .insert({ user_id: session.user.id, blocks: [], drawings: [], pan_x: 0, pan_y: 0, zoom: 1, name: canvasName })
-      .select('id,name,updated_at')
-      .single();
+    const newCanvas = await insertCanvasWithRetry(session.user.id, canvasName, undefined, !name?.trim());
 
     if (createSeq !== loadSeqRef.current) {
       isLoadingRef.current = false;
@@ -339,6 +416,8 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         return next;
       });
       void refreshCanvases(session.user.id);
+    } else {
+      toast.error('Failed to create a new canvas. Please try again.');
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
@@ -401,6 +480,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     if (!error) {
       const list = await refreshCanvases(session.user.id);
+      if (!list) {
+        isLoadingRef.current = false;
+        return;
+      }
       const activeId = currentCanvasIdRef.current;
       const activeStillExists = activeId ? list.some((canvas) => canvas.id === activeId) : false;
 
@@ -468,8 +551,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
             pan_y: pending.pan.y,
             zoom: pending.zoom,
           } as any)
-          .eq('id', pending.canvasId)
-          .eq('user_id', userId);
+          .eq('id', pending.canvasId);
 
         const requestDurationMs = performance.now() - requestStart;
         const queuedAtMs = typeof pending.queuedAtMs === 'number'

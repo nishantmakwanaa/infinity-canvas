@@ -55,21 +55,33 @@ export type Database = {
       }
       shared_canvases: {
         Row: {
+          access_level: string
+          canvas_name: string
           canvas_id: string
           created_at: string
           id: string
+          owner_username: string
+          page_name: string
           share_token: string
         }
         Insert: {
+          access_level?: string
+          canvas_name?: string
           canvas_id: string
           created_at?: string
           id?: string
+          owner_username?: string
+          page_name?: string
           share_token?: string
         }
         Update: {
+          access_level?: string
+          canvas_name?: string
           canvas_id?: string
           created_at?: string
           id?: string
+          owner_username?: string
+          page_name?: string
           share_token?: string
         }
         Relationships: [
@@ -87,7 +99,41 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      open_page_api_link: {
+        Args: {
+          p_user_token: string
+          p_canvas_token: string
+          p_page_token: string
+        }
+        Returns: {
+          blocks: Json
+          canvas_id: string
+          canvas_name: string
+          can_edit: boolean
+          drawings: Json
+          is_share: boolean
+          owner_user_id: string
+          owner_username: string
+          page_name: string
+          pan_x: number
+          pan_y: number
+          share_access: string | null
+          zoom: number
+        }[]
+      }
+      upsert_canvas_share: {
+        Args: {
+          p_canvas_id: string
+          p_access_level?: string
+        }
+        Returns: {
+          access_level: string
+          canvas_name: string
+          owner_username: string
+          page_name: string
+          share_token: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

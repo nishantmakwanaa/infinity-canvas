@@ -1,8 +1,14 @@
-import { Pencil, Trash2, X, Check } from 'lucide-react';
+import { Pencil, Trash2, X, Check, User as UserIcon, LogOut } from 'lucide-react';
 import type { CanvasMeta } from '@/hooks/useCanvasSync';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { getPageNumber, parseCanvasRouteName } from '@/lib/canvasNaming';
+
+interface SidebarUser {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
 
 interface CanvasSidebarProps {
   loggedInUserId: string | null;
@@ -11,6 +17,8 @@ interface CanvasSidebarProps {
   onCreateCanvas: () => void;
   onSelectCanvas: (id: string) => void;
   onDeleteCanvases: (ids: string[]) => void;
+  user?: SidebarUser | null;
+  onSignOut?: () => void;
   widthPercent: number;
   setWidthPercent: (value: number | ((prev: number) => number)) => void;
   isMobile?: boolean;
@@ -23,6 +31,8 @@ export function CanvasSidebar({
   onCreateCanvas,
   onSelectCanvas,
   onDeleteCanvases,
+  user,
+  onSignOut,
   widthPercent,
   setWidthPercent,
   isMobile = false,
@@ -30,6 +40,10 @@ export function CanvasSidebar({
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedPages, setSelectedPages] = useState<Record<string, boolean>>({});
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const profileButtonRef = useRef<HTMLButtonElement>(null);
+  const profilePanelRef = useRef<HTMLDivElement>(null);
 
   const groupedCanvases = useMemo(() => {
     const bySlug = new Map<string, {
@@ -86,6 +100,28 @@ export function CanvasSidebar({
   }, [selectedPages]);
 
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const statusLabel = deleteMode
+    ? `Select pages to delete${selectedIds.length ? ` (${selectedIds.length} selected)` : ''}`
+    : `${groupedCanvases.length} total`;
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [user?.id, user?.avatarUrl]);
+
+  useEffect(() => {
+    if (!showProfileMenu) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (profileButtonRef.current?.contains(target)) return;
+      if (profilePanelRef.current?.contains(target)) return;
+      setShowProfileMenu(false);
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [showProfileMenu]);
 
   const toggleSelectedPage = (pageId: string) => {
     setSelectedPages((prev) => ({ ...prev, [pageId]: !prev[pageId] }));
@@ -151,7 +187,7 @@ export function CanvasSidebar({
           <Pencil size={13} />
         </button>
       </div>
-      <div className="p-2 space-y-1 overflow-auto no-scrollbar h-[calc(100%-56px-52px)]">
+      <div className="p-2 space-y-1 overflow-auto no-scrollbar h-[calc(100%-56px-58px)]">
         {groupedCanvases.length === 0 && (
           <div className="text-[11px] font-mono text-muted-foreground px-1 py-2">No canvases yet</div>
         )}
@@ -213,26 +249,71 @@ export function CanvasSidebar({
       </div>
 
       {/* Bottom actions */}
-      <div className="absolute left-0 right-0 bottom-0 h-[52px] border-t border-border bg-card/95 px-2 flex items-center gap-2">
+      <div className="absolute left-0 right-0 bottom-0 h-[58px] border-t border-border bg-card/95 px-2 py-2 flex items-center gap-2">
+        {user && (
+          <div className="relative" ref={profilePanelRef}>
+            <button
+              ref={profileButtonRef}
+              className="h-9 w-9 border border-border hover:bg-accent transition-colors inline-flex items-center justify-center"
+              onClick={() => setShowProfileMenu((prev) => !prev)}
+              title={user.displayName}
+            >
+              {user.avatarUrl && !avatarLoadFailed ? (
+                <img
+                  src={user.avatarUrl}
+                  alt=""
+                  className="w-5 h-5 object-cover"
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarLoadFailed(true)}
+                />
+              ) : (
+                <UserIcon size={14} />
+              )}
+            </button>
+
+            {showProfileMenu && (
+              <div className="absolute left-0 bottom-10 z-50 w-56 border border-border bg-card p-3 space-y-3 shadow-lg">
+                <div className="flex items-center gap-2">
+                  {user.avatarUrl && !avatarLoadFailed ? (
+                    <img src={user.avatarUrl} alt="" className="w-8 h-8 object-cover" referrerPolicy="no-referrer" onError={() => setAvatarLoadFailed(true)} />
+                  ) : (
+                    <div className="w-8 h-8 bg-muted flex items-center justify-center"><UserIcon size={14} /></div>
+                  )}
+                  <span className="text-xs font-mono text-foreground truncate">{user.displayName}</span>
+                </div>
+                <button
+                  className="flex items-center gap-2 w-full text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    onSignOut?.();
+                  }}
+                >
+                  <LogOut size={12} /> Sign out
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {!deleteMode ? (
           <button
-            className="h-9 px-3 border border-border text-xs font-mono hover:bg-accent transition-colors inline-flex items-center gap-2"
+            className="h-9 w-9 border border-border hover:bg-accent transition-colors inline-flex items-center justify-center"
             onClick={() => setDeleteMode(true)}
             title="Delete canvases"
           >
-            <Trash2 size={14} /> Delete
+            <Trash2 size={14} />
           </button>
         ) : (
           <div className="flex items-center gap-2 min-w-0">
             <button
-              className={`h-9 px-3 border text-xs font-mono inline-flex items-center gap-2 ${
+              className={`h-9 px-2 border text-xs font-mono inline-flex items-center gap-1 ${
                 selectedIds.length ? 'bg-foreground text-background border-foreground hover:opacity-90' : 'bg-card text-muted-foreground border-border opacity-60 cursor-not-allowed'
               }`}
               disabled={!selectedIds.length}
               onClick={() => setConfirmDeleteOpen(true)}
               title="Delete selected"
             >
-              <Trash2 size={14} /> Delete ({selectedIds.length})
+              <Trash2 size={14} /> ({selectedIds.length})
             </button>
             <button
               className="h-9 w-9 border border-border inline-flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
@@ -245,8 +326,8 @@ export function CanvasSidebar({
           </div>
         )}
 
-        <span className="ml-auto min-w-0 max-w-[42%] truncate text-right text-[10px] font-mono text-muted-foreground">
-          {deleteMode ? 'Select pages to delete' : `${groupedCanvases.length} total`}
+        <span className="ml-auto min-w-0 max-w-[44%] truncate text-right text-[10px] font-mono text-muted-foreground">
+          {statusLabel}
         </span>
       </div>
 

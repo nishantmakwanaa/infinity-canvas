@@ -11,6 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCanvasStore } from '@/store/canvasStore';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useCanvasCollaboration } from '@/hooks/useCanvasCollaboration';
 import { getPageNumber, nextPageSlug, parseCanvasRouteName } from '@/lib/canvasNaming';
 import { parseSegmentedApiRequest, toOwnerPagePath } from '@/lib/pageApi';
 import { recordPerfMetric, startDroppedFrameMonitor } from '@/lib/perfTelemetry';
@@ -51,6 +52,7 @@ const Index = () => {
 
   const [routeMode, setRouteMode] = useState<RouteMode>(rawUserToken ? 'loading' : 'home');
   const [routeCanvasId, setRouteCanvasId] = useState<string | null>(null);
+  const [routeCanvasName, setRouteCanvasName] = useState<string | null>(null);
   const [routeError, setRouteError] = useState('');
 
   const syncEnabled = routeMode === 'home' || routeMode === 'editable';
@@ -85,16 +87,42 @@ const Index = () => {
   const isRouteLoading = routeMode === 'loading';
   const isNotFoundMode = routeMode === 'not-found';
   const isEditorMode = !isReadOnlyMode && !isRouteLoading && !isNotFoundMode;
+  const activeCanvasIdForCollab = currentCanvasId || routeCanvasId;
+  const collaborationIdentity = useMemo(
+    () => (user
+      ? {
+        id: user.id,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+      }
+      : null),
+    [user?.id, user?.displayName, user?.avatarUrl]
+  );
+
+  const {
+    collaborators,
+    isConnected: collaborationConnected,
+    toggleUserVisibility,
+  } = useCanvasCollaboration(
+    activeCanvasIdForCollab,
+    collaborationIdentity,
+    Boolean(user?.id && isEditorMode && activeCanvasIdForCollab)
+  );
 
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
   const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile && isEditorMode ? sidebarWidthPercent : 0;
   const effectiveCanvasLoading = isRouteLoading || (syncEnabled && isCanvasLoading);
   const showHeaderAndBars = !effectiveCanvasLoading;
+  const activeCanvasName = currentCanvasName || routeCanvasName;
 
-  const currentParsedName = parseCanvasRouteName(currentCanvasName);
+  const currentParsedName = parseCanvasRouteName(activeCanvasName);
   const pageItems = useMemo(
-    () =>
-      canvases
+    () => {
+      if (isReadOnlyMode && routeCanvasId) {
+        return [{ id: routeCanvasId, label: currentParsedName.pageLabel }];
+      }
+
+      return canvases
         .map((canvas) => ({ id: canvas.id, parsed: parseCanvasRouteName(canvas.name) }))
         .filter((canvas) => canvas.parsed.canvasSlug === currentParsedName.canvasSlug)
         .sort((a, b) => {
@@ -102,8 +130,9 @@ const Index = () => {
           const bNum = getPageNumber(b.parsed.pageSlug) ?? Number.MAX_SAFE_INTEGER;
           return aNum - bNum;
         })
-        .map((canvas) => ({ id: canvas.id, label: canvas.parsed.pageLabel })),
-    [canvases, currentParsedName.canvasSlug]
+        .map((canvas) => ({ id: canvas.id, label: canvas.parsed.pageLabel }));
+    },
+    [canvases, currentParsedName.canvasSlug, currentParsedName.pageLabel, isReadOnlyMode, routeCanvasId]
   );
 
   const cloneSnapshot = (snapshot: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(snapshot));
@@ -224,6 +253,7 @@ const Index = () => {
     if (!rawUserToken) {
       setRouteMode('home');
       setRouteCanvasId(null);
+      setRouteCanvasName(null);
       setRouteError('');
       return;
     }
@@ -231,6 +261,7 @@ const Index = () => {
     if (!parsedApiRequest) {
       setRouteMode('not-found');
       setRouteCanvasId(null);
+      setRouteCanvasName(null);
       setRouteError('Invalid page API token');
       return;
     }
@@ -238,6 +269,7 @@ const Index = () => {
     let cancelled = false;
     setRouteMode('loading');
     setRouteCanvasId(null);
+    setRouteCanvasName(null);
     setRouteError('');
 
     const resolveRoute = async () => {
@@ -254,18 +286,22 @@ const Index = () => {
         if (session?.user?.id) {
           setRouteMode('home');
           setRouteCanvasId(null);
+          setRouteCanvasName(null);
           setRouteError('');
           navigate('/', { replace: true });
           return;
         }
         setRouteMode('not-found');
         setRouteCanvasId(null);
+        setRouteCanvasName(null);
         setRouteError('Page not found or link expired');
         return;
       }
 
-      const canEdit = Boolean(row.can_edit) && !Boolean(row.is_share);
+      const canEdit = Boolean(row.can_edit);
       setRouteCanvasId(row.canvas_id);
+      const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
+      setRouteCanvasName(resolvedName);
 
       if (canEdit) {
         setRouteMode('editable');
@@ -306,24 +342,22 @@ const Index = () => {
   }, [isMobile]);
 
   useEffect(() => {
-    if (!isLoggedIn || !currentCanvasName || !isEditorMode || !user) {
+    if (!isLoggedIn || !activeCanvasName || !isEditorMode || !user) {
       document.title = DEFAULT_SITE_TITLE;
       return;
     }
     document.title = `CNVS : ${currentParsedName.canvasLabel} - ${currentParsedName.pageLabel}`;
-  }, [currentCanvasName, currentParsedName.canvasLabel, currentParsedName.pageLabel, isEditorMode, isLoggedIn, user]);
+  }, [activeCanvasName, currentParsedName.canvasLabel, currentParsedName.pageLabel, isEditorMode, isLoggedIn, user]);
 
   useEffect(() => {
     if (!user || !currentCanvasName || !isEditorMode) return;
-    if (rawUserToken && routeMode === 'editable' && routeCanvasId && currentCanvasId !== routeCanvasId) {
-      return;
-    }
+    if (rawUserToken) return;
     const desired = toOwnerPagePath(slugifyUsername(user.username), currentCanvasName, user.id);
     const currentRoute = `${window.location.pathname}${window.location.search}`;
     if (currentRoute !== desired) {
       navigate(desired, { replace: true });
     }
-  }, [currentCanvasId, currentCanvasName, isEditorMode, navigate, rawUserToken, routeCanvasId, routeMode, user]);
+  }, [currentCanvasName, isEditorMode, navigate, rawUserToken, user]);
 
   useEffect(() => {
     if (isMobile) {
@@ -516,39 +550,31 @@ const Index = () => {
         />
       </Profiler>
 
-      {isReadOnlyMode && (
-        <div className="fixed top-4 left-4 z-50 flex items-center gap-2">
-          <div className="w-7 h-7 bg-foreground flex items-center justify-center">
-            <span className="text-background text-xs font-bold font-mono">C</span>
-          </div>
-          <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
-          <span className="text-[10px] font-mono text-muted-foreground border border-border px-2 py-0.5">
-            READ ONLY
-          </span>
-        </div>
-      )}
-
-      {showHeaderAndBars && isEditorMode && (
+      {showHeaderAndBars && (isEditorMode || isReadOnlyMode) && (
         <AppHeader
           user={user}
           loading={loading}
           onSignIn={signInWithGoogle}
-          onSignOut={signOut}
+          readOnlyMode={isReadOnlyMode}
+          forceShowCollaboratorsButton={isReadOnlyMode}
           currentCanvasId={currentCanvasId}
-          currentCanvasName={currentCanvasName}
+          currentCanvasName={activeCanvasName}
           currentCanvasLabel={currentParsedName.canvasLabel}
           currentPageLabel={currentParsedName.pageLabel}
           pageItems={pageItems}
           onSelectPage={(id) => {
             void selectCanvas(id);
           }}
-          onCreatePage={handleCreatePage}
-          onRenameCanvas={session?.user?.id ? renameCanvas : undefined}
-          onRenamePage={session?.user?.id ? renamePage : undefined}
+          onCreatePage={isEditorMode ? handleCreatePage : undefined}
+          onRenameCanvas={isEditorMode && session?.user?.id ? renameCanvas : undefined}
+          onRenamePage={isEditorMode && session?.user?.id ? renamePage : undefined}
           leftOffsetPercent={canvasLeftOffsetPercent}
-          showSidebarToggle={isLoggedIn}
+          showSidebarToggle={isLoggedIn && isEditorMode}
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+          collaborators={collaborators}
+          collaborationConnected={collaborationConnected}
+          onToggleCollaboratorVisibility={toggleUserVisibility}
         />
       )}
 
@@ -570,6 +596,8 @@ const Index = () => {
               if (isMobile) setIsSidebarOpen(false);
             }}
             onDeleteCanvases={(ids) => deleteCanvases(ids)}
+            user={user ? { id: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl } : null}
+            onSignOut={signOut}
             widthPercent={effectiveSidebarWidthPercent}
             setWidthPercent={setSidebarWidthPercent}
             isMobile={isMobile}
@@ -577,19 +605,20 @@ const Index = () => {
         </>
       )}
 
-      {showHeaderAndBars && isEditorMode && (
+      {showHeaderAndBars && (isEditorMode || isReadOnlyMode) && (
         <Toolbar
           leftOffsetPercent={canvasLeftOffsetPercent}
           isMobile={isMobile}
-          showMobileSettingsButton={isMobile}
+          allowedToolIds={isReadOnlyMode ? ['select', 'hand'] : undefined}
+          showMobileSettingsButton={isEditorMode && isMobile}
           isMobileSettingsOpen={mobileToolSettingsOpen}
-          onToggleMobileSettings={() => setMobileToolSettingsOpen((prev) => !prev)}
-          onOpenMobileSettings={() => setMobileToolSettingsOpen(true)}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          onCopy={copySelectedBlocks}
-          onCut={cutSelectedBlocks}
-          onDelete={deleteSelectedBlocks}
+          onToggleMobileSettings={isEditorMode ? (() => setMobileToolSettingsOpen((prev) => !prev)) : undefined}
+          onOpenMobileSettings={isEditorMode ? (() => setMobileToolSettingsOpen(true)) : undefined}
+          onUndo={isEditorMode ? handleUndo : undefined}
+          onRedo={isEditorMode ? handleRedo : undefined}
+          onCopy={isEditorMode ? copySelectedBlocks : undefined}
+          onCut={isEditorMode ? cutSelectedBlocks : undefined}
+          onDelete={isEditorMode ? deleteSelectedBlocks : undefined}
         />
       )}
 

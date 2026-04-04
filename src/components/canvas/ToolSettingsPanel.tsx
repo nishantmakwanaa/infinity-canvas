@@ -57,6 +57,7 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   const [isDarkMode, setIsDarkMode] = useState(() =>
     typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
   );
+  const [sharePanelBottom, setSharePanelBottom] = useState<number | null>(null);
 
   const activeSelectedBlockId = selectedBlockIds[0] || selectedBlockId;
   const selectedBlock = activeSelectedBlockId
@@ -67,6 +68,31 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   const isBlockSettingsMode = Boolean(
     selectedBlock && BLOCK_TYPES_WITH_STYLES.includes(selectedBlock.type)
   );
+  const isVisible = (isDrawingSettingsMode || isBlockSettingsMode) && (!isMobile || mobileOpen);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('cnvs-tool-settings-visibility', { detail: { open: isVisible } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('cnvs-tool-settings-visibility', { detail: { open: false } }));
+    };
+  }, [isVisible]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onShareVisibility = (event: Event) => {
+      const custom = event as CustomEvent<{ open?: boolean; bottom?: number | null }>;
+      if (!custom?.detail?.open) {
+        setSharePanelBottom(null);
+        return;
+      }
+      const nextBottom = typeof custom.detail.bottom === 'number' ? custom.detail.bottom : null;
+      setSharePanelBottom(nextBottom);
+    };
+
+    window.addEventListener('cnvs-share-menu-visibility', onShareVisibility as EventListener);
+    return () => window.removeEventListener('cnvs-share-menu-visibility', onShareVisibility as EventListener);
+  }, []);
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
@@ -147,21 +173,21 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
 
   const panelClass = isMobile
     ? 'fixed bottom-[calc(1rem+88px)] right-3 z-[65] w-56 max-h-[56vh] overflow-auto no-scrollbar border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
-    : 'fixed top-16 right-4 z-50 w-56 border border-border bg-card p-3 space-y-3 animate-fade-in';
+    : 'fixed right-4 z-50 w-56 border border-border bg-card p-3 space-y-3 animate-fade-in';
+  const desktopTop = sharePanelBottom !== null ? Math.max(64, Math.round(sharePanelBottom + 8)) : 64;
 
   const visibleColors = useMemo(
     () => COLORS.map((color) => (isDarkMode && color.toLowerCase() === '#000000' ? '#ffffff' : color)),
     [isDarkMode]
   );
 
-  if (!isDrawingSettingsMode && !isBlockSettingsMode) return null;
-  if (isMobile && !mobileOpen) return null;
+  if (!isVisible) return null;
 
   const sectionGridClass = 'grid grid-cols-4 gap-1.5 mt-1.5';
   const optionButtonClass = 'h-8 text-[10px] font-mono border transition-colors touch-manipulation';
 
   return (
-    <div className={panelClass}>
+    <div className={panelClass} style={isMobile ? undefined : { top: `${desktopTop}px` }} data-tool-settings-panel="true">
       {isMobile && (
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Tool settings</span>

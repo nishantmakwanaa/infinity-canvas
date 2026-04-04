@@ -1,6 +1,6 @@
 -- =============================================================================
 -- CNVS — Combined baseline migration
--- Merges all 4 migrations into one idempotent file.
+-- Merges baseline + compact-token/perf + collaboration/editor access into one idempotent file.
 -- Safe to run on a fresh project.
 -- =============================================================================
 
@@ -71,6 +71,33 @@ alter table public.shared_canvases
 alter table public.shared_canvases
   alter column page_name set not null;
 
+alter table public.shared_canvases
+  add column if not exists access_level text;
+
+update public.shared_canvases
+set access_level = 'viewer'
+where access_level is null or btrim(access_level) = '';
+
+alter table public.shared_canvases
+  alter column access_level set default 'viewer';
+
+alter table public.shared_canvases
+  alter column access_level set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'shared_canvases_access_level_check'
+      and conrelid = 'public.shared_canvases'::regclass
+  ) then
+    alter table public.shared_canvases
+      add constraint shared_canvases_access_level_check
+      check (access_level in ('viewer', 'editor'));
+  end if;
+end $$;
+
 -- -----------------------------------------------------------------------------
 -- Indexes
 -- -----------------------------------------------------------------------------
@@ -84,6 +111,8 @@ create unique index if not exists canvases_user_id_name_key          -- stable n
   on public.canvases(user_id, name);
 create index        if not exists canvases_name_updated_idx
   on public.canvases(name, updated_at desc);
+create index        if not exists canvases_name_user_updated_idx
+  on public.canvases(name, user_id, updated_at desc);
 
 -- shared_canvases
 create unique index if not exists shared_canvases_canvas_id_key
@@ -93,6 +122,21 @@ create unique index if not exists shared_canvases_share_token_key
 drop index if exists shared_canvases_owner_canvas_key;
 create unique index if not exists shared_canvases_owner_canvas_page_key   -- unique public route per user+name+page
   on public.shared_canvases(owner_username, canvas_name, page_name);
+create index if not exists shared_canvases_share_lookup_idx
+  on public.shared_canvases(share_token, owner_username, canvas_id);
+create index if not exists shared_canvases_canvas_access_idx
+  on public.shared_canvases(canvas_id, access_level);
+
+do $$
+begin
+  begin
+    execute 'create index if not exists auth_users_email_localpart_idx on auth.users ((lower(coalesce(nullif(split_part(email, ''@'', 1), ''''), ''user''))))';
+  exception
+    when insufficient_privilege then
+      -- Managed auth schema may not be owned by migration role; continue without this optional index.
+      null;
+  end;
+end $$;
 
 -- -----------------------------------------------------------------------------
 -- Functions & Triggers
@@ -212,10 +256,33 @@ on public.canvases for insert
 with check (auth.uid() = user_id);
 
 drop policy if exists "canvases_update_own" on public.canvases;
-create policy "canvases_update_own"
+drop policy if exists "canvases_update_owner_or_shared_editor" on public.canvases;
+create policy "canvases_update_owner_or_shared_editor"
 on public.canvases for update
-using     (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+using (
+  auth.uid() = user_id
+  or (
+    auth.uid() is not null
+    and exists (
+      select 1
+      from public.shared_canvases sc
+      where sc.canvas_id = canvases.id
+        and sc.access_level = 'editor'
+    )
+  )
+)
+with check (
+  auth.uid() = user_id
+  or (
+    auth.uid() is not null
+    and exists (
+      select 1
+      from public.shared_canvases sc
+      where sc.canvas_id = canvases.id
+        and sc.access_level = 'editor'
+    )
+  )
+);
 
 drop policy if exists "canvases_delete_own" on public.canvases;
 create policy "canvases_delete_own"
@@ -267,6 +334,21 @@ using (
       and c.user_id = auth.uid()
   )
 );
+
+-- -----------------------------------------------------------------------------
+-- Privileges (required by PostgREST in addition to RLS policies)
+-- -----------------------------------------------------------------------------
+
+grant usage on schema public to anon, authenticated, service_role;
+
+grant select on table public.canvases to anon;
+grant select, insert, update, delete on table public.canvases to authenticated;
+
+grant select on table public.shared_canvases to anon;
+grant select, insert, update, delete on table public.shared_canvases to authenticated;
+
+grant all on table public.canvases to service_role;
+grant all on table public.shared_canvases to service_role;
 
 -- -----------------------------------------------------------------------------
 -- RPC helpers
@@ -324,11 +406,63 @@ comment on function public.decode_hex_to_text(text)
 is 'Decodes compact URL-safe base64 tokens (preferred) and legacy dotted/dashed hex tokens into UTF-8 text.';
 
 
+create or replace function public.upsert_canvas_share(
+  p_canvas_id uuid,
+  p_access_level text default 'viewer'
+)
+returns table (
+  share_token text,
+  owner_username text,
+  canvas_name text,
+  page_name text,
+  access_level text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_access text := lower(btrim(coalesce(p_access_level, 'viewer')));
+begin
+  if v_access not in ('viewer', 'editor') then
+    v_access := 'viewer';
+  end if;
+
+  if not exists (
+    select 1
+    from public.canvases c
+    where c.id = p_canvas_id
+      and c.user_id = auth.uid()
+  ) then
+    raise exception 'not allowed';
+  end if;
+
+  insert into public.shared_canvases (canvas_id, access_level)
+  values (p_canvas_id, v_access)
+  on conflict (canvas_id)
+  do update
+    set access_level = excluded.access_level
+  returning
+    public.shared_canvases.share_token,
+    public.shared_canvases.owner_username,
+    public.shared_canvases.canvas_name,
+    public.shared_canvases.page_name,
+    public.shared_canvases.access_level
+  into share_token, owner_username, canvas_name, page_name, access_level;
+
+  return next;
+end;
+$$;
+
+revoke all on function public.upsert_canvas_share(uuid, text) from public;
+grant execute on function public.upsert_canvas_share(uuid, text) to authenticated;
+
+
 -- Resolves segmented API route:
 --   /<userToken>?<canvasToken>=<pageToken>.page
 -- userToken prefix:
---   pg => owner route (editable only by owner)
---   sh => shared route (always read-only)
+--   pg => owner route
+--   sh => shared route (viewer/editor access by share_access)
 drop function if exists public.open_page_api_link(text);
 drop function if exists public.open_page_api_link(text, text, text);
 
@@ -344,6 +478,7 @@ returns table (
   canvas_name     text,
   page_name       text,
   is_share        boolean,
+  share_access    text,
   can_edit        boolean,
   blocks          jsonb,
   drawings        jsonb,
@@ -407,11 +542,12 @@ begin
         select
           c.id as canvas_id,
           c.user_id as owner_user_id,
-          lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) as owner_username,
+          lower(sc.owner_username) as owner_username,
           case when position('/' in c.name) > 0 then split_part(c.name, '/', 1) else c.name end as canvas_name,
           case when position('/' in c.name) > 0 then split_part(c.name, '/', 2) else 'page-1.cnvs' end as page_name,
           true as is_share,
-          false as can_edit,
+          sc.access_level as share_access,
+          auth.uid() is not null and (auth.uid() = c.user_id or sc.access_level = 'editor') as can_edit,
           c.blocks,
           c.drawings,
           c.pan_x,
@@ -419,9 +555,8 @@ begin
           c.zoom
         from public.shared_canvases sc
         join public.canvases c on c.id = sc.canvas_id
-        join auth.users u on u.id = c.user_id
         where sc.share_token = v_share_token
-          and lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) = lower(v_owner_username)
+          and lower(sc.owner_username) = lower(v_owner_username)
           and (v_owner_user_id is null or c.user_id = v_owner_user_id)
       ), counts as (
         select count(*) as total from matched
@@ -458,15 +593,68 @@ begin
     v_page := v_page || '.cnvs';
   end if;
 
+  if v_owner_user_id is not null then
+    return query
+      with matched as (
+        select
+          c.id as canvas_id,
+          c.user_id as owner_user_id,
+          lower(v_owner_username) as owner_username,
+          case when position('/' in c.name) > 0 then split_part(c.name, '/', 1) else c.name end as canvas_name,
+          case when position('/' in c.name) > 0 then split_part(c.name, '/', 2) else 'page-1.cnvs' end as page_name,
+          false as is_share,
+          null::text as share_access,
+          auth.uid() is not null and auth.uid() = c.user_id as can_edit,
+          c.blocks,
+          c.drawings,
+          c.pan_x,
+          c.pan_y,
+          c.zoom,
+          case when c.name = v_canvas || '/' || v_page then 0 else 1 end as priority,
+          c.updated_at
+        from public.canvases c
+        where c.user_id = v_owner_user_id
+          and (
+            c.name = v_canvas || '/' || v_page
+            or c.name = v_canvas
+          )
+      ), ranked as (
+        select matched.*, row_number() over (order by priority, updated_at desc) as rn, count(*) over () as total
+        from matched
+      )
+      select
+        ranked.canvas_id,
+        ranked.owner_user_id,
+        ranked.owner_username,
+        ranked.canvas_name,
+        ranked.page_name,
+        ranked.is_share,
+        ranked.share_access,
+        ranked.can_edit,
+        ranked.blocks,
+        ranked.drawings,
+        ranked.pan_x,
+        ranked.pan_y,
+        ranked.zoom
+      from ranked
+      where rn = 1 and total = 1;
+    return;
+  end if;
+
   return query
-    with matched as (
+    with owner_users as (
+      select u.id
+      from auth.users u
+      where lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) = lower(v_owner_username)
+    ), matched as (
       select
         c.id as canvas_id,
         c.user_id as owner_user_id,
-        lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) as owner_username,
+        lower(v_owner_username) as owner_username,
         case when position('/' in c.name) > 0 then split_part(c.name, '/', 1) else c.name end as canvas_name,
         case when position('/' in c.name) > 0 then split_part(c.name, '/', 2) else 'page-1.cnvs' end as page_name,
         false as is_share,
+        null::text as share_access,
         auth.uid() is not null and auth.uid() = c.user_id as can_edit,
         c.blocks,
         c.drawings,
@@ -476,13 +664,9 @@ begin
         case when c.name = v_canvas || '/' || v_page then 0 else 1 end as priority,
         c.updated_at
       from public.canvases c
-      join auth.users u on u.id = c.user_id
-      where lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) = lower(v_owner_username)
-        and (v_owner_user_id is null or c.user_id = v_owner_user_id)
-        and (
-          c.name = v_canvas || '/' || v_page
-          or c.name = v_canvas
-        )
+      join owner_users ou on ou.id = c.user_id
+      where c.name = v_canvas || '/' || v_page
+         or c.name = v_canvas
     ), ranked as (
       select matched.*, row_number() over (order by priority, updated_at desc) as rn, count(*) over () as total
       from matched
@@ -494,6 +678,7 @@ begin
       ranked.canvas_name,
       ranked.page_name,
       ranked.is_share,
+      ranked.share_access,
       ranked.can_edit,
       ranked.blocks,
       ranked.drawings,

@@ -1,11 +1,10 @@
-import { LogOut, User as UserIcon, MoreVertical, PanelLeftClose, PanelLeftOpen, Share2, ChevronDown } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { MoreVertical, PanelLeftClose, PanelLeftOpen, Share2, ChevronDown, Users, Eye, EyeOff, Wifi, WifiOff } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { AppMenu } from './AppMenu';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { parseCanvasRouteName } from '@/lib/canvasNaming';
 import { toOwnerPagePath, toPageApiUrl, toSharePagePath } from '@/lib/pageApi';
 
@@ -21,7 +20,8 @@ interface AppHeaderProps {
   user: AuthUser | null;
   loading: boolean;
   onSignIn: () => void;
-  onSignOut: () => void;
+  readOnlyMode?: boolean;
+  forceShowCollaboratorsButton?: boolean;
   currentCanvasId?: string | null;
   currentCanvasName?: string | null;
   leftOffsetPercent?: number;
@@ -35,34 +35,28 @@ interface AppHeaderProps {
   onCreatePage?: () => void;
   onRenameCanvas?: (nextName: string) => Promise<boolean>;
   onRenamePage?: (nextName: string) => Promise<boolean>;
+  collaborators?: {
+    userId: string;
+    displayName: string;
+    avatarUrl: string | null;
+    activeTool: string | null;
+    isVisible: boolean;
+    color: string;
+  }[];
+  collaborationConnected?: boolean;
+  onToggleCollaboratorVisibility?: (userId: string) => void;
 }
 
 function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
-function buildGoogleAvatarRetryUrl(url: string) {
-  const trimmed = url.trim();
-  if (!trimmed || !/googleusercontent\.com/i.test(trimmed)) return null;
-
-  try {
-    const parsed = new URL(trimmed);
-    parsed.searchParams.set('sz', '256');
-    return parsed.toString();
-  } catch {
-    // Keep a string-based fallback for non-standard URL shapes.
-    if (/=s\d+(-c)?$/i.test(trimmed)) {
-      return trimmed.replace(/=s\d+(-c)?$/i, '=s256-c');
-    }
-    return `${trimmed}${trimmed.includes('?') ? '&' : '?'}sz=256`;
-  }
-}
-
 export function AppHeader({
   user,
   loading,
   onSignIn,
-  onSignOut,
+  readOnlyMode = false,
+  forceShowCollaboratorsButton = false,
   currentCanvasId,
   currentCanvasName,
   leftOffsetPercent = 0,
@@ -76,12 +70,17 @@ export function AppHeader({
   onCreatePage,
   onRenameCanvas,
   onRenamePage,
+  collaborators = [],
+  collaborationConnected = false,
+  onToggleCollaboratorVisibility,
 }: AppHeaderProps) {
-  const [showProfile, setShowProfile] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showShortcutsDialog, setShowShortcutsDialog] = useState(false);
-  const [showQrDialog, setShowQrDialog] = useState(false);
+  const [showShareMenu, setShowShareMenu] = useState(false);
+  const [showCollaboratorMenu, setShowCollaboratorMenu] = useState(false);
+  const [shareAccessLevel, setShareAccessLevel] = useState<'viewer' | 'editor'>('viewer');
+  const [isPublished, setIsPublished] = useState(false);
   const [showPageMenu, setShowPageMenu] = useState(false);
   const [editingCanvasName, setEditingCanvasName] = useState(false);
   const [editingPageName, setEditingPageName] = useState(false);
@@ -90,90 +89,210 @@ export function AppHeader({
   const [renamingCanvas, setRenamingCanvas] = useState(false);
   const [renamingPage, setRenamingPage] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
-  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
-  const [avatarRetryUrl, setAvatarRetryUrl] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
+  const shareButtonRef = useRef<HTMLButtonElement>(null);
+  const sharePanelRef = useRef<HTMLDivElement>(null);
+  const shareMenuContentRef = useRef<HTMLDivElement>(null);
+  const collabButtonRef = useRef<HTMLButtonElement>(null);
+  const collabPanelRef = useRef<HTMLDivElement>(null);
   const headerCanvasName = (currentCanvasLabel || '').trim() || 'Untitled Canvas';
   const headerPageName = (currentPageLabel || '').trim() || 'Page 1';
   const isGuestUser = !user;
-  const profileAvatarSrc = !avatarLoadFailed ? (avatarRetryUrl || user?.avatarUrl || null) : null;
+  const shouldShowCollaborators = Boolean(
+    user && onToggleCollaboratorVisibility && (
+      shareAccessLevel === 'editor' ||
+      collaborators.length > 0 ||
+      forceShowCollaboratorsButton
+    )
+  );
 
-  const getShareUrl = async () => {
+  const resolveShareContext = async () => {
+    if (!user) return null;
+    const canvas = currentCanvasId
+      ? { id: currentCanvasId }
+      : (await supabase
+        .from('canvases')
+        .select('id')
+        .eq('user_id', user.id)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .single()).data;
+
+    if (!canvas) {
+      toast.error('No canvas found');
+      return null;
+    }
+
+    let routeCanvasName = (currentCanvasName || '').trim();
+    if (!routeCanvasName) {
+      const { data: canvasRow } = await supabase
+        .from('canvases')
+        .select('name')
+        .eq('id', canvas.id)
+        .maybeSingle();
+      routeCanvasName = ((canvasRow as any)?.name || '').trim();
+    }
+
+    const routeOwner = slugifyUsername(user.username);
+    const parsed = parseCanvasRouteName(routeCanvasName);
+    const ownerRouteName = `${parsed.canvasSlug}/${parsed.pageSlug}`;
+    const fallbackOwnerPath = toOwnerPagePath(routeOwner, ownerRouteName, user.id);
+
+    return {
+      canvasId: canvas.id,
+      routeOwner,
+      parsed,
+      fallbackOwnerPath,
+    };
+  };
+
+  const publishCanvas = async (accessLevel: 'viewer' | 'editor') => {
     if (!user) return null;
     setSharing(true);
     try {
-      const canvas = currentCanvasId
-        ? { id: currentCanvasId }
-        : (await supabase
-          .from('canvases')
-          .select('id')
-          .eq('user_id', user.id)
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .single()).data;
+      const context = await resolveShareContext();
+      if (!context) return null;
 
-      if (!canvas) {
-        toast.error('No canvas found');
+      let upsertedShare: any = null;
+      const rpc = await (supabase as any).rpc('upsert_canvas_share', {
+        p_canvas_id: context.canvasId,
+        p_access_level: accessLevel,
+      });
+
+      if (rpc?.data) {
+        upsertedShare = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+      }
+
+      if (!upsertedShare?.share_token) {
+        const fallback = await supabase
+          .from('shared_canvases')
+          .upsert(
+            {
+              canvas_id: context.canvasId,
+              owner_username: context.routeOwner,
+              canvas_name: context.parsed.canvasSlug,
+              page_name: context.parsed.pageSlug,
+              access_level: accessLevel,
+            } as any,
+            { onConflict: 'canvas_id' }
+          )
+          .select('share_token,access_level')
+          .single();
+        upsertedShare = fallback.data as any;
+      }
+
+      const shareToken = (upsertedShare as any)?.share_token;
+      if (!shareToken) {
+        toast.error('Failed to publish share link');
         return null;
       }
 
-      let routeCanvasName = (currentCanvasName || '').trim();
-      if (!routeCanvasName) {
-        const { data: canvasRow } = await supabase
-          .from('canvases')
-          .select('name')
-          .eq('id', canvas.id)
-          .maybeSingle();
-        routeCanvasName = ((canvasRow as any)?.name || '').trim();
-      }
-      const routeOwner = slugifyUsername(user.username);
-      const parsed = parseCanvasRouteName(routeCanvasName);
+      const resolvedAccess = ((upsertedShare as any)?.access_level as 'viewer' | 'editor' | undefined) || accessLevel;
+      const nextShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, shareToken, user.id));
 
-      const { data: upsertedShare } = await supabase
-        .from('shared_canvases')
-        .upsert(
-          {
-            canvas_id: canvas.id,
-            owner_username: routeOwner,
-            canvas_name: parsed.canvasSlug,
-            page_name: parsed.pageSlug,
-          } as any,
-          { onConflict: 'canvas_id' }
-        )
-        .select('share_token,owner_username,canvas_name,page_name')
-        .single();
-
-      const shareToken = (upsertedShare as any)?.share_token;
-      const ownerRouteName = `${parsed.canvasSlug}/${parsed.pageSlug}`;
-      const fallbackOwnerPath = toOwnerPagePath(routeOwner, ownerRouteName, user.id);
-      const nextShareUrl = shareToken
-        ? toPageApiUrl(toSharePagePath(routeOwner, shareToken, user.id))
-        : toPageApiUrl(fallbackOwnerPath);
-
+      setShareAccessLevel(resolvedAccess);
       setShareUrl(nextShareUrl);
+      setIsPublished(true);
       return nextShareUrl;
     } catch {
-      toast.error('Failed to share');
+      toast.error('Failed to publish');
       return null;
     } finally {
       setSharing(false);
     }
   };
 
+  const unpublishCanvas = async () => {
+    if (!user) return false;
+    setSharing(true);
+    try {
+      const context = await resolveShareContext();
+      if (!context) return false;
+
+      const { error } = await supabase
+        .from('shared_canvases')
+        .delete()
+        .eq('canvas_id', context.canvasId);
+
+      if (error) {
+        toast.error('Failed to unpublish');
+        return false;
+      }
+
+      setIsPublished(false);
+      setShareUrl('');
+      toast.success('Unpublished');
+      return true;
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const loadShareState = async () => {
+    if (!user) return;
+    const context = await resolveShareContext();
+    if (!context) return;
+
+    const { data } = await supabase
+      .from('shared_canvases')
+      .select('share_token,access_level')
+      .eq('canvas_id', context.canvasId)
+      .maybeSingle();
+
+    if (!data?.share_token) {
+      setIsPublished(false);
+      setShareUrl('');
+      setShareAccessLevel('viewer');
+      return;
+    }
+
+    const nextShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, (data as any).share_token, user.id));
+    setShareAccessLevel((((data as any).access_level as 'viewer' | 'editor') || 'viewer'));
+    setIsPublished(true);
+    setShareUrl(nextShareUrl);
+  };
+
   const handleCopyShareLink = async () => {
-    const nextShareUrl = await getShareUrl();
-    if (!nextShareUrl) return;
-    await navigator.clipboard.writeText(nextShareUrl);
+    if (!isPublished || !shareUrl) {
+      toast.info('Publish first to copy the public link');
+      return;
+    }
+    await navigator.clipboard.writeText(shareUrl);
     toast.success('Share link copied!');
   };
 
-  const handleOpenQrShare = async () => {
-    const nextShareUrl = await getShareUrl();
+  const handlePublishToggle = async () => {
+    if (isPublished) {
+      await unpublishCanvas();
+      return;
+    }
+    const nextShareUrl = await publishCanvas(shareAccessLevel);
     if (!nextShareUrl) return;
-    setShowQrDialog(true);
+    toast.success(shareAccessLevel === 'editor' ? 'Published as editor access' : 'Published as viewer access');
   };
+
+  const handleShareAccessChange = async (nextAccess: 'viewer' | 'editor') => {
+    setShareAccessLevel(nextAccess);
+    if (!isPublished) return;
+    const nextShareUrl = await publishCanvas(nextAccess);
+    if (!nextShareUrl) return;
+    toast.success(nextAccess === 'editor' ? 'Permission updated to editor' : 'Permission updated to viewer');
+  };
+
+  const emitShareMenuVisibility = useCallback((open: boolean) => {
+    if (typeof window === 'undefined') return;
+    const rect = shareMenuContentRef.current?.getBoundingClientRect();
+    window.dispatchEvent(
+      new CustomEvent('cnvs-share-menu-visibility', {
+        detail: {
+          open,
+          bottom: rect ? rect.bottom : null,
+        },
+      })
+    );
+  }, []);
 
   const startCanvasRename = () => {
     if (!onRenameCanvas || renamingCanvas) return;
@@ -224,27 +343,62 @@ export function AppHeader({
   }, [showMenu]);
 
   useEffect(() => {
-    setAvatarLoadFailed(false);
-    setAvatarRetryUrl(null);
-  }, [user?.id, user?.avatarUrl]);
+    if (!showShareMenu) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (shareButtonRef.current?.contains(target)) return;
+      if (sharePanelRef.current?.contains(target)) return;
+      setShowShareMenu(false);
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [showShareMenu]);
+
+  useEffect(() => {
+    if (!showShareMenu) {
+      emitShareMenuVisibility(false);
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      emitShareMenuVisibility(true);
+    });
+
+    const onResize = () => emitShareMenuVisibility(true);
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', onResize);
+      emitShareMenuVisibility(false);
+    };
+  }, [emitShareMenuVisibility, showShareMenu]);
+
+  useEffect(() => {
+    if (!showCollaboratorMenu) return;
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (collabButtonRef.current?.contains(target)) return;
+      if (collabPanelRef.current?.contains(target)) return;
+      setShowCollaboratorMenu(false);
+    };
+
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [showCollaboratorMenu]);
 
   useEffect(() => {
     const onOpenShortcuts = () => setShowShortcutsDialog(true);
     window.addEventListener('cnvs-open-shortcuts', onOpenShortcuts);
-    return () => window.removeEventListener('cnvs-open-shortcuts', onOpenShortcuts);
+    return () => {
+      window.removeEventListener('cnvs-open-shortcuts', onOpenShortcuts);
+    };
   }, []);
-
-  const handleAvatarImageError = () => {
-    const current = profileAvatarSrc || '';
-    if (!avatarRetryUrl && user?.avatarUrl) {
-      const retry = buildGoogleAvatarRetryUrl(user.avatarUrl);
-      if (retry && retry !== current) {
-        setAvatarRetryUrl(retry);
-        return;
-      }
-    }
-    setAvatarLoadFailed(true);
-  };
 
   return (
     <>
@@ -341,16 +495,20 @@ export function AppHeader({
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowPageMenu(false)} />
                     <div className="absolute left-0 top-9 z-50 w-44 border border-border bg-card p-1 shadow-lg">
-                      <button
-                        className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
-                        onClick={() => {
-                          setShowPageMenu(false);
-                          onCreatePage?.();
-                        }}
-                      >
-                        + Add new page
-                      </button>
-                      <div className="my-1 h-px bg-border" />
+                      {onCreatePage && !readOnlyMode && (
+                        <>
+                          <button
+                            className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
+                            onClick={() => {
+                              setShowPageMenu(false);
+                              onCreatePage?.();
+                            }}
+                          >
+                            + Add new page
+                          </button>
+                          <div className="my-1 h-px bg-border" />
+                        </>
+                      )}
                       {pageItems.map((item) => (
                         <button
                           key={item.id}
@@ -387,86 +545,154 @@ export function AppHeader({
           </div>
         </div>
         <div className="flex items-center gap-2">
+        {user && shouldShowCollaborators && (
+          <div className="relative" ref={collabPanelRef}>
+            <button
+              ref={collabButtonRef}
+              onClick={() => {
+                setShowShareMenu(false);
+                setShowCollaboratorMenu((prev) => !prev);
+              }}
+              className="toolbar-btn relative"
+              title="Active collaborators"
+            >
+              <Users size={14} />
+              {collaborators.length > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-foreground text-background text-[9px] font-mono inline-flex items-center justify-center">
+                  {collaborators.length}
+                </span>
+              )}
+            </button>
+            {showCollaboratorMenu && (
+              <div className="absolute right-0 top-10 z-50 w-72 border border-border bg-card p-2 shadow-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono text-foreground">Active editors</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
+                    {collaborationConnected ? <Wifi size={10} /> : <WifiOff size={10} />}
+                    {collaborationConnected ? 'Live' : 'Reconnecting'}
+                  </span>
+                </div>
+                {collaborators.length === 0 ? (
+                  <div className="text-[10px] font-mono text-muted-foreground border border-border p-2">
+                    No one else is editing this canvas right now.
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto no-scrollbar">
+                    {collaborators.map((collab) => (
+                      <div key={collab.userId} className="flex items-center justify-between border border-border px-2 py-1.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          {collab.avatarUrl ? (
+                            <img src={collab.avatarUrl} alt="" className="w-6 h-6 object-cover" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div
+                              className="w-6 h-6 text-[10px] font-mono text-white flex items-center justify-center"
+                              style={{ backgroundColor: collab.color }}
+                            >
+                              {(collab.displayName || 'U').slice(0, 1).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-mono text-foreground truncate">{collab.displayName}</div>
+                            <div className="text-[10px] font-mono text-muted-foreground truncate">
+                              {collab.activeTool ? `Tool: ${collab.activeTool}` : 'Browsing'}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          className="toolbar-btn w-7 h-7"
+                          title={collab.isVisible ? 'Hide this user changes' : 'Show this user changes'}
+                          onClick={() => onToggleCollaboratorVisibility?.(collab.userId)}
+                        >
+                          {collab.isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {user && (
-          <button onClick={handleOpenQrShare} disabled={sharing} className="toolbar-btn" title="Share canvas">
-            <Share2 size={14} />
-          </button>
+          <div className="relative" ref={sharePanelRef}>
+            <button
+              ref={shareButtonRef}
+              onClick={() => {
+                setShowCollaboratorMenu(false);
+                setShowMenu(false);
+                setShowShareMenu((prev) => {
+                  const next = !prev;
+                  if (next) {
+                    void loadShareState();
+                  }
+                  return next;
+                });
+              }}
+              disabled={sharing}
+              className="toolbar-btn"
+              title="Share canvas"
+            >
+              <Share2 size={14} />
+            </button>
+            {showShareMenu && (
+              <div ref={shareMenuContentRef} className="absolute top-10 right-0 z-50 w-72 border border-border bg-card p-3 shadow-lg space-y-3">
+                <div className="space-y-1">
+                  <div className="text-[11px] font-mono text-foreground">Share canvas</div>
+                  <div className="text-[10px] font-mono text-muted-foreground">Publish to make this page public. Unpublish hides it from public links.</div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-mono text-muted-foreground">Permission</label>
+                  <select
+                    className="h-8 w-full border border-border bg-card px-2 text-[11px] font-mono"
+                    value={shareAccessLevel}
+                    onChange={(e) => {
+                      void handleShareAccessChange((e.target.value as 'viewer' | 'editor') || 'viewer');
+                    }}
+                  >
+                    <option value="viewer">Anyone can view</option>
+                    <option value="editor">Anyone can edit</option>
+                  </select>
+                </div>
+
+                <div className="border border-border p-2 bg-card flex items-center justify-center min-h-[138px]">
+                  {shareUrl ? (
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`}
+                      alt="Canvas share QR code"
+                      className="w-32 h-32"
+                    />
+                  ) : (
+                    <div className="text-[10px] font-mono text-muted-foreground">Publish to generate QR code</div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button className="h-8 border border-border text-[11px] font-mono hover:bg-accent" onClick={handlePublishToggle} disabled={sharing}>
+                    {isPublished ? 'Unpublish' : 'Publish'}
+                  </button>
+                  <button className="h-8 border border-border text-[11px] font-mono hover:bg-accent" onClick={handleCopyShareLink} disabled={sharing || !isPublished || !shareUrl}>
+                    Copy link
+                  </button>
+                </div>
+                {shareUrl && (
+                  <div className="border border-border p-2 text-[10px] font-mono text-muted-foreground break-all">{shareUrl}</div>
+                )}
+              </div>
+            )}
+          </div>
         )}
 
         {loading ? null : !user ? (
           <button onClick={onSignIn} className="h-9 px-4 border border-border bg-foreground text-background text-xs font-mono hover:opacity-90 transition-opacity">
             Sign in to share
           </button>
-        ) : (
-          <div className="relative">
-            <button onClick={() => setShowProfile(!showProfile)} className="w-9 h-9 border border-border bg-card overflow-hidden flex items-center justify-center">
-              {profileAvatarSrc ? (
-                <img
-                  src={profileAvatarSrc}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                  onError={handleAvatarImageError}
-                />
-              ) : (
-                <UserIcon size={16} className="text-foreground" />
-              )}
-            </button>
-            {showProfile && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowProfile(false)} />
-                <div className="absolute right-0 top-11 z-50 w-56 border border-border bg-card p-3 space-y-3">
-                  <div className="flex items-center gap-2">
-                    {profileAvatarSrc ? (
-                      <img
-                        src={profileAvatarSrc}
-                        alt=""
-                        className="w-8 h-8 object-cover"
-                        referrerPolicy="no-referrer"
-                        onError={handleAvatarImageError}
-                      />
-                    ) : (
-                      <div className="w-8 h-8 bg-muted flex items-center justify-center"><UserIcon size={14} /></div>
-                    )}
-                    <span className="text-xs font-mono text-foreground truncate">{user.displayName}</span>
-                  </div>
-                  <button onClick={() => { setShowProfile(false); onSignOut(); }} className="flex items-center gap-2 w-full text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
-                    <LogOut size={12} /> Sign out
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
+        ) : null}
         </div>
       </header>
 
       {showShortcutsDialog && <KeyboardShortcutsDialog onClose={() => setShowShortcutsDialog(false)} />}
-      <Dialog open={showQrDialog} onOpenChange={setShowQrDialog}>
-        <DialogContent className="max-w-sm" data-no-translate="true">
-          <DialogHeader>
-            <DialogTitle className="text-sm font-mono">Share Canvas</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="border border-border p-2 bg-card flex items-center justify-center">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`}
-                alt="Canvas share QR code"
-                className="w-48 h-48"
-              />
-            </div>
-            <div className="text-[11px] font-mono text-muted-foreground break-all border border-border p-2">
-              {shareUrl}
-            </div>
-            <button
-              className="h-9 w-full border border-border text-xs font-mono hover:bg-accent"
-              onClick={handleCopyShareLink}
-            >
-              Copy link
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
