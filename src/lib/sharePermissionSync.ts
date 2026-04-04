@@ -1,0 +1,91 @@
+import { supabase } from '@/integrations/supabase/client';
+
+export type ShareAccessLevel = 'viewer' | 'editor';
+
+let syncRpcMode: 'auto' | 'current' | 'legacy' | 'disabled' = 'auto';
+
+async function callSyncRpc(canvasId: string, accessLevel?: ShareAccessLevel) {
+  try {
+    const response = await supabase.rpc('sync_canvas_permission_from_share', {
+      p_canvas_id: canvasId,
+      p_access_level: accessLevel,
+    });
+    return { error: response?.error || null };
+  } catch (error) {
+    return { error };
+  }
+}
+
+async function callLegacySyncRpc(canvasId: string) {
+  try {
+    const response = await supabase.rpc('sync_canvas_permission_from_share', {
+      p_canvas_id: canvasId,
+    });
+    return { error: response?.error || null };
+  } catch (error) {
+    return { error };
+  }
+}
+
+function isSignatureMismatchError(error: any) {
+  const status = Number(error?.status || 0);
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  if (code === '42883' || code === 'PGRST202' || code === 'PGRST203') return true;
+  if (status === 400 && message.includes('function')) return true;
+  if (message.includes('could not find the function')) return true;
+  if (message.includes('no function matches')) return true;
+  return false;
+}
+
+/**
+ * Best-effort sync of canvas_permissions from share settings.
+ * Tries the newer `(uuid, text)` signature first, then falls back to `(uuid)`.
+ */
+export async function syncCanvasPermissionFromShare(
+  canvasId: string,
+  accessLevel?: ShareAccessLevel,
+) {
+  if (!canvasId) return;
+
+  if (syncRpcMode === 'disabled') {
+    return;
+  }
+
+  if (syncRpcMode === 'legacy') {
+    const legacy = await callLegacySyncRpc(canvasId);
+    if (legacy?.error && Number(legacy.error?.status || 0) === 400) {
+      syncRpcMode = 'disabled';
+    }
+    return;
+  }
+
+  if (syncRpcMode === 'current') {
+    const preferred = await callSyncRpc(canvasId, accessLevel);
+    const preferredStatus = Number(preferred?.error?.status || 0);
+    if (preferred?.error && (isSignatureMismatchError(preferred.error) || preferredStatus === 400)) {
+      syncRpcMode = 'legacy';
+      const legacy = await callLegacySyncRpc(canvasId);
+      if (legacy?.error) {
+        syncRpcMode = Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto';
+      }
+    }
+    return;
+  }
+
+  const preferred = await callSyncRpc(canvasId, accessLevel);
+
+  if (!preferred?.error) {
+    syncRpcMode = 'current';
+    return;
+  }
+  const preferredStatus = Number(preferred.error?.status || 0);
+  if (!isSignatureMismatchError(preferred.error) && preferredStatus !== 400) return;
+
+  syncRpcMode = 'legacy';
+
+  const legacy = await callLegacySyncRpc(canvasId);
+  if (legacy?.error) {
+    syncRpcMode = Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto';
+  }
+}

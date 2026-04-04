@@ -17,6 +17,7 @@ import { useCanvasCollaboration } from '@/hooks/useCanvasCollaboration';
 import { getPageNumber, nextPageSlug, parseCanvasRouteName } from '@/lib/canvasNaming';
 import { parseSegmentedApiRequest, toOwnerPagePath } from '@/lib/pageApi';
 import { recordPerfMetric, startDroppedFrameMonitor } from '@/lib/perfTelemetry';
+import { syncCanvasPermissionFromShare } from '@/lib/sharePermissionSync';
 import { supabase } from '@/integrations/supabase/client';
 import { useLocation } from 'react-router-dom';
 
@@ -177,8 +178,9 @@ const Index = () => {
   const editorSlotGranted = useSocketTransport ? socketEditorSlotGranted : realtimeEditorSlotGranted;
   const editorSlotActiveCount = useSocketTransport ? socketEditorSlotActiveCount : realtimeEditorSlotActiveCount;
   const editorSlotLimitCount = useSocketTransport ? socketEditorSlotLimitCount : realtimeEditorSlotLimitCount;
+  const editorSlotCapReached = editorSlotLimitCount > 0 && editorSlotActiveCount >= editorSlotLimitCount;
 
-  const collabEditLocked = allowCollaboratorsForCurrentCanvas && !editorSlotGranted && !isCurrentCanvasOwned;
+  const collabEditLocked = allowCollaboratorsForCurrentCanvas && !editorSlotGranted && !isCurrentCanvasOwned && editorSlotCapReached;
   const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked;
   const canMutateCanvas = isEditorMode && !collabEditLocked;
 
@@ -340,15 +342,22 @@ const Index = () => {
     const isJoinedCanvas = sharedCanvases.some((canvas) => canvas.id === canvasId);
 
     if (isJoinedCanvas && session?.user?.id) {
-      await supabase
-        .rpc('sync_canvas_permission_from_share', {
-          p_canvas_id: canvasId,
-          p_access_level: joinedAccess === 'editor' ? 'editor' : 'viewer',
-        })
-        .catch(() => null);
+      try {
+        await syncCanvasPermissionFromShare(
+          canvasId,
+          joinedAccess === 'editor' ? 'editor' : 'viewer'
+        );
+      } catch {
+        // Best-effort pre-sync only.
+      }
     }
 
-    const loaded = await selectCanvas(canvasId);
+    let loaded = false;
+    try {
+      loaded = await selectCanvas(canvasId);
+    } catch {
+      loaded = false;
+    }
     if (!loaded) {
       toast.error('Unable to open this canvas. Please try again.');
     }
@@ -474,70 +483,80 @@ const Index = () => {
     setRouteError('');
 
     const resolveRoute = async () => {
-      const { data, error } = await supabase.rpc('open_page_api_link', {
-        p_user_token: parsedApiRequest.userToken,
-        p_canvas_token: parsedApiRequest.canvasToken,
-        p_page_token: parsedApiRequest.pageToken,
-      });
+      try {
+        const { data, error } = await supabase.rpc('open_page_api_link', {
+          p_user_token: parsedApiRequest.userToken,
+          p_canvas_token: parsedApiRequest.canvasToken,
+          p_page_token: parsedApiRequest.pageToken,
+        });
 
-      if (cancelled) return;
+        if (cancelled) return;
 
-      const row = Array.isArray(data) ? data[0] : data;
-      if (error || !row?.canvas_id) {
-        if (session?.user?.id) {
-          setRouteMode('home');
+        const row = Array.isArray(data) ? data[0] : data;
+        if (error || !row?.canvas_id) {
+          if (session?.user?.id) {
+            setRouteMode('home');
+            setRouteCanvasId(null);
+            setRouteCanvasName(null);
+            setRouteError('');
+            navigate('/', { replace: true });
+            return;
+          }
+          setRouteMode('not-found');
           setRouteCanvasId(null);
           setRouteCanvasName(null);
-          setRouteError('');
-          navigate('/', { replace: true });
+          setRouteError('Page not found or link expired');
           return;
         }
+
+        const shareAccess = String((row as any)?.share_access || '').toLowerCase();
+        const isShareRoute = Boolean((row as any)?.is_share);
+        const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
+        const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
+        if (isShareRoute && session?.user?.id && row?.canvas_id) {
+          const requestedAccess = (shareAccess === 'editor' || isShareEditLink) ? 'editor' : 'viewer';
+          markJoinedCanvasAccess(row.canvas_id, requestedAccess);
+          try {
+            await syncCanvasPermissionFromShare(row.canvas_id, requestedAccess);
+          } catch {
+            // Best-effort sync only.
+          }
+          if (cancelled) return;
+        }
+
+        // Always seed canvas content from route payload so opening never renders blank.
+        useCanvasStore.getState().loadCanvas(
+          (row.blocks as any[]) || [],
+          { x: Number(row.pan_x) || 0, y: Number(row.pan_y) || 0 },
+          typeof row.zoom === 'number' ? row.zoom : 1,
+          (row.drawings as any[]) || []
+        );
+
+        const canEdit = isShareRoute
+          ? Boolean(isShareEditLink && session?.user?.id && (Boolean(row.can_edit) || shareAccess === 'editor'))
+          : Boolean(row.can_edit);
+        setRouteCanvasId(row.canvas_id);
+        const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
+        setRouteCanvasName(resolvedName);
+
+        if (canEdit) {
+          setRouteMode('editable');
+          return;
+        }
+
+        if (requiresAuthGate) {
+          setRouteMode('auth-required');
+          setRouteError('Login required to edit shared canvas');
+          return;
+        }
+        setRouteMode('readonly');
+      } catch {
+        if (cancelled) return;
         setRouteMode('not-found');
         setRouteCanvasId(null);
         setRouteCanvasName(null);
-        setRouteError('Page not found or link expired');
-        return;
+        setRouteError('Unable to open this page right now. Please try again.');
       }
-
-      const shareAccess = String((row as any)?.share_access || '').toLowerCase();
-      const isShareRoute = Boolean((row as any)?.is_share);
-      const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
-      const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
-      if (isShareRoute && session?.user?.id && row?.canvas_id) {
-        const requestedAccess = (shareAccess === 'editor' || isShareEditLink) ? 'editor' : 'viewer';
-        markJoinedCanvasAccess(row.canvas_id, requestedAccess);
-        await supabase
-          .rpc('sync_canvas_permission_from_share', {
-            p_canvas_id: row.canvas_id,
-            p_access_level: requestedAccess,
-          })
-          .catch(() => null);
-        if (cancelled) return;
-      }
-      const canEdit = isShareRoute
-        ? Boolean(isShareEditLink && session?.user?.id && (Boolean(row.can_edit) || shareAccess === 'editor'))
-        : Boolean(row.can_edit);
-      setRouteCanvasId(row.canvas_id);
-      const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
-      setRouteCanvasName(resolvedName);
-
-      if (canEdit) {
-        setRouteMode('editable');
-        return;
-      }
-
-      useCanvasStore.getState().loadCanvas(
-        (row.blocks as any[]) || [],
-        { x: Number(row.pan_x) || 0, y: Number(row.pan_y) || 0 },
-        typeof row.zoom === 'number' ? row.zoom : 1,
-        (row.drawings as any[]) || []
-      );
-      if (requiresAuthGate) {
-        setRouteMode('auth-required');
-        setRouteError('Login required to edit shared canvas');
-        return;
-      }
-      setRouteMode('readonly');
     };
 
     void resolveRoute();
@@ -566,13 +585,24 @@ const Index = () => {
       routeSelectFailedCanvasIdRef.current = routeCanvasId;
       routeSelectFailedAtRef.current = Date.now();
       if (rawUserToken) {
-        if (parsedApiRequest?.kind === 'share') {
+        if (parsedApiRequest?.kind === 'share' || parsedApiRequest?.kind === 'share-edit') {
           setRouteMode('readonly');
-          setRouteError('Canvas is view-only in this session.');
+          setRouteError(
+            parsedApiRequest?.kind === 'share-edit'
+              ? 'Shared edit is temporarily unavailable. Opened read-only.'
+              : 'Canvas is view-only in this session.'
+          );
           return;
         }
         setRouteMode('editable');
         setRouteError('Canvas load retrying. If this persists, refresh once.');
+      }
+    }).catch(() => {
+      routeSelectFailedCanvasIdRef.current = routeCanvasId;
+      routeSelectFailedAtRef.current = Date.now();
+      if (rawUserToken) {
+        setRouteMode('readonly');
+        setRouteError('Unable to open edit session right now. Opened read-only.');
       }
     });
   }, [currentCanvasId, parsedApiRequest?.kind, rawUserToken, routeMode, routeCanvasId, selectCanvas, syncEnabled]);

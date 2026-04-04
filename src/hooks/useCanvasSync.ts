@@ -4,6 +4,7 @@ import { useCanvasStore, CanvasBlock, DrawingElement } from '@/store/canvasStore
 import type { Session } from '@supabase/supabase-js';
 import { createDefaultCanvasRouteName, parseCanvasRouteName, toCanvasRouteName } from '@/lib/canvasNaming';
 import { recordPerfMetric } from '@/lib/perfTelemetry';
+import { syncCanvasPermissionFromShare } from '@/lib/sharePermissionSync';
 import { toast } from 'sonner';
 
 export interface CanvasMeta {
@@ -518,12 +519,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return next;
     });
 
-    void supabase
-      .rpc('sync_canvas_permission_from_share', {
-        p_canvas_id: canvasId,
-        p_access_level: requestedAccess,
-      })
-      .catch(() => undefined);
+    void syncCanvasPermissionFromShare(canvasId, requestedAccess);
   }, [session?.user?.id]);
 
   const removeJoinedCanvasAccess = useCallback((userId: string, canvasId: string) => {
@@ -640,13 +636,21 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         drawings
       );
       return true;
+    } catch (error: any) {
+      if (isPermissionDeniedError(error)) {
+        warnPermissionIssue();
+      }
+      if (isPostgrestResourceMissingError(error)) {
+        warnSchemaNotDeployed();
+      }
+      return false;
     } finally {
       isLoadingRef.current = false;
       if (seq === loadSeqRef.current) {
         setIsCanvasLoading(false);
       }
     }
-  }, [refreshAllCanvasCollections, removeJoinedCanvasAccess, syncServerLastOpenedCanvasId, warnPermissionIssue]);
+  }, [refreshAllCanvasCollections, removeJoinedCanvasAccess, syncServerLastOpenedCanvasId, warnPermissionIssue, warnSchemaNotDeployed]);
 
   const loadCanvas = useCallback(async (userId: string) => {
     const autoLoadSeq = ++loadSeqRef.current;
@@ -791,7 +795,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   }, [enabled, refreshAllCanvasCollections, session?.user?.id]);
 
   const selectCanvas = useCallback(async (canvasId: string): Promise<boolean> => {
-    if (!enabled) return;
+    if (!enabled) return false;
     return await loadCanvasById(canvasId, session?.user?.id);
   }, [enabled, loadCanvasById, session?.user?.id]);
 
