@@ -185,7 +185,7 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   ];
 
   const panelClass = isMobile
-    ? 'fixed bottom-[calc(1rem+88px)] right-3 z-[65] w-56 max-h-[56vh] overflow-auto no-scrollbar border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
+    ? 'fixed right-3 z-[65] w-56 max-h-[56vh] overflow-auto no-scrollbar border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
     : 'fixed right-4 z-50 w-56 border border-border bg-card p-3 space-y-3 animate-fade-in';
   const topOverlayBottom = Math.max(
     headerOverlayBottoms.share ?? 64,
@@ -204,7 +204,11 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   const optionButtonClass = 'h-8 text-[10px] font-mono border transition-colors touch-manipulation';
 
   return (
-    <div className={panelClass} style={isMobile ? undefined : { top: `${desktopTop}px` }} data-tool-settings-panel="true">
+    <div
+      className={panelClass}
+      style={isMobile ? { bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px) + 88px)' } : { top: `${desktopTop}px` }}
+      data-tool-settings-panel="true"
+    >
       {isMobile && (
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">Tool settings</span>

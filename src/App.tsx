@@ -55,6 +55,37 @@ const App = () => {
     return () => window.removeEventListener('keydown', onThemeShortcut, true);
   }, []);
 
+  useEffect(() => {
+    const onWheelPreventBrowserZoom = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+      }
+    };
+
+    const onKeyDownPreventBrowserZoom = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_' || e.key === '0') {
+        e.preventDefault();
+      }
+    };
+
+    const onGesture = (e: Event) => {
+      e.preventDefault();
+    };
+
+    window.addEventListener('wheel', onWheelPreventBrowserZoom, { passive: false, capture: true });
+    window.addEventListener('keydown', onKeyDownPreventBrowserZoom, true);
+    document.addEventListener('gesturestart', onGesture as EventListener, { passive: false });
+    document.addEventListener('gesturechange', onGesture as EventListener, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', onWheelPreventBrowserZoom, true);
+      window.removeEventListener('keydown', onKeyDownPreventBrowserZoom, true);
+      document.removeEventListener('gesturestart', onGesture as EventListener);
+      document.removeEventListener('gesturechange', onGesture as EventListener);
+    };
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>

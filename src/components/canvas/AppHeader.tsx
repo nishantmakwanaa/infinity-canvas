@@ -56,6 +56,21 @@ function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
+function getMobileCanvasDisplayName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Untitled';
+  const firstWord = trimmed.split(/\s+/)[0] || trimmed;
+  if (firstWord.length < trimmed.length) return `${firstWord}...`;
+  if (firstWord.length > 14) return `${firstWord.slice(0, 14)}...`;
+  return firstWord;
+}
+
+function getMobilePageDisplayName(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Page 1';
+  return trimmed;
+}
+
 export function AppHeader({
   user,
   loading,
@@ -110,6 +125,8 @@ export function AppHeader({
   const collabMenuContentRef = useRef<HTMLDivElement>(null);
   const headerCanvasName = (currentCanvasLabel || '').trim() || 'Untitled Canvas';
   const headerPageName = (currentPageLabel || '').trim() || 'Page 1';
+  const headerCanvasDisplayName = isMobile ? getMobileCanvasDisplayName(headerCanvasName) : headerCanvasName;
+  const headerPageDisplayName = isMobile ? getMobilePageDisplayName(headerPageName) : headerPageName;
   const isGuestUser = !user;
   const shouldShowCollaborators = Boolean(
     user && onToggleCollaboratorVisibility && !readOnlyMode && forceShowCollaboratorsButton
@@ -587,7 +604,7 @@ export function AppHeader({
         className="fixed top-0 right-0 z-50 h-14 flex items-center justify-between px-4"
         style={{ left: `${leftOffsetPercent}%` }}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           {showSidebarToggle && (
             <button
               onClick={onToggleSidebar}
@@ -606,10 +623,11 @@ export function AppHeader({
             </div>
           ) : (
             <>
+              <div className="flex min-w-0 items-center gap-1.5">
               {editingCanvasName ? (
                 <input
                   autoFocus
-                  className="h-8 px-2 border border-border bg-card text-sm font-mono text-foreground min-w-[140px] max-w-[40vw]"
+                  className={`h-8 px-2 border border-border bg-card text-sm font-mono text-foreground ${isMobile ? 'min-w-[108px] max-w-[34vw]' : 'min-w-[140px] max-w-[40vw]'}`}
                   value={canvasNameDraft}
                   onChange={(e) => setCanvasNameDraft(e.target.value)}
                   onBlur={() => { void submitCanvasRename(); }}
@@ -626,20 +644,20 @@ export function AppHeader({
                 />
               ) : (
                 <button
-                  className="max-w-[40vw] truncate text-sm font-semibold tracking-tight text-foreground font-mono hover:text-primary disabled:opacity-60"
+                  className="max-w-[28vw] sm:max-w-[40vw] truncate text-xs sm:text-sm font-semibold tracking-tight text-foreground font-mono hover:text-primary disabled:opacity-60"
                   onClick={startCanvasRename}
                   disabled={!onRenameCanvas || renamingCanvas}
-                  title="Rename canvas"
+                  title={headerCanvasName}
                 >
-                  {headerCanvasName}
+                  {headerCanvasDisplayName}
                 </button>
               )}
-              <div className="relative">
-                <div className="flex items-center">
+              <div className="relative min-w-0">
+                <div className="flex min-w-0 items-center">
                   {editingPageName ? (
                     <input
                       autoFocus
-                      className="h-7 px-2 border border-border bg-card text-[11px] font-mono text-foreground min-w-[110px]"
+                      className={`h-7 px-2 border border-border bg-card text-[11px] font-mono text-foreground ${isMobile ? 'w-[min(34vw,150px)] min-w-0' : 'min-w-[110px]'}`}
                       value={pageNameDraft}
                       onChange={(e) => setPageNameDraft(e.target.value)}
                       onBlur={() => { void submitPageRename(); }}
@@ -656,12 +674,12 @@ export function AppHeader({
                     />
                   ) : (
                     <button
-                      className="h-7 px-2 border border-border bg-card text-[11px] font-mono hover:bg-accent disabled:opacity-60"
+                      className="h-7 w-[min(34vw,150px)] sm:w-auto sm:max-w-none min-w-0 px-2 border border-border bg-card text-[11px] font-mono hover:bg-accent disabled:opacity-60 truncate text-left"
                       onClick={startPageRename}
                       disabled={!onRenamePage || renamingPage}
-                      title="Rename page"
+                      title={headerPageName}
                     >
-                      / {headerPageName}
+                      / {headerPageDisplayName}
                     </button>
                   )}
                   <button
@@ -706,10 +724,32 @@ export function AppHeader({
                   </>
                 )}
               </div>
+              </div>
             </>
           )}
+          {!isMobile && (
+            <div className="relative" ref={menuPanelRef}>
+              <button ref={menuButtonRef} onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
+                <MoreVertical size={14} />
+              </button>
+              {showMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+                  <AppMenu
+                    onClose={() => setShowMenu(false)}
+                    isMobile={isMobile}
+                    onOpenShortcuts={() => setShowShortcutsDialog(true)}
+                    onOpenExtension={() => toast.info('Browser extension coming soon!')}
+                  />
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="ml-2 flex shrink-0 items-center gap-2">
+        {isMobile && (
           <div className="relative" ref={menuPanelRef}>
-            <button ref={menuButtonRef} onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
+            <button ref={menuButtonRef} onClick={() => setShowMenu(!showMenu)} className="toolbar-btn">
               <MoreVertical size={14} />
             </button>
             {showMenu && (
@@ -724,8 +764,7 @@ export function AppHeader({
               </>
             )}
           </div>
-        </div>
-        <div className="flex items-center gap-2">
+        )}
         {user && shouldShowCollaborators && (
           <div className="relative" ref={collabPanelRef}>
             <button

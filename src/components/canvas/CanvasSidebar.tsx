@@ -51,6 +51,13 @@ export function CanvasSidebar({
   const profileButtonRef = useRef<HTMLButtonElement>(null);
   const profilePanelRef = useRef<HTMLDivElement>(null);
 
+  const getMobileClampedLabel = useCallback((value: string, maxLength: number) => {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return '';
+    if (!isMobile || trimmed.length <= maxLength) return trimmed;
+    return `${trimmed.slice(0, maxLength)}...`;
+  }, [isMobile]);
+
   const groupCanvasList = useCallback((source: CanvasMeta[], splitById = false) => {
     const bySlug = new Map<string, {
       groupKey: string;
@@ -287,7 +294,7 @@ export function CanvasSidebar({
                           {areAllPagesSelected ? <Check size={12} /> : null}
                         </div>
                       )}
-                      <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
+                      <div className="min-w-0 flex-1 truncate" title={group.canvasLabel}>{getMobileClampedLabel(group.canvasLabel, 26)}</div>
                       <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
                     </div>
                   </button>
@@ -306,7 +313,7 @@ export function CanvasSidebar({
                             <div className={`w-3.5 h-3.5 border flex items-center justify-center ${isSelectedPage ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
                               {isSelectedPage ? <Check size={10} /> : null}
                             </div>
-                            <span className="truncate">{page.pageLabel}</span>
+                            <span className="min-w-0 flex-1 truncate" title={page.pageLabel}>{getMobileClampedLabel(page.pageLabel, 22)}</span>
                           </button>
                         );
                       })}
@@ -347,7 +354,7 @@ export function CanvasSidebar({
                           {areAllPagesSelected ? <Check size={12} /> : null}
                         </div>
                       )}
-                      <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
+                      <div className="min-w-0 flex-1 truncate" title={group.canvasLabel}>{getMobileClampedLabel(group.canvasLabel, 26)}</div>
                       <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
                     </div>
                   </button>
@@ -366,7 +373,7 @@ export function CanvasSidebar({
                             <div className={`w-3.5 h-3.5 border flex items-center justify-center ${isSelectedPage ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
                               {isSelectedPage ? <Check size={10} /> : null}
                             </div>
-                            <span className="truncate">{page.pageLabel}</span>
+                            <span className="min-w-0 flex-1 truncate" title={page.pageLabel}>{getMobileClampedLabel(page.pageLabel, 22)}</span>
                           </button>
                         );
                       })}
@@ -395,7 +402,7 @@ export function CanvasSidebar({
                     }}
                   >
                     <div className="flex items-center gap-2">
-                      <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
+                      <div className="min-w-0 flex-1 truncate" title={group.canvasLabel}>{getMobileClampedLabel(group.canvasLabel, 26)}</div>
                       <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
                     </div>
                   </button>
@@ -434,7 +441,7 @@ export function CanvasSidebar({
                           {areAllPagesSelected ? <Check size={12} /> : null}
                         </div>
                       )}
-                      <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
+                      <div className="min-w-0 flex-1 truncate" title={group.canvasLabel}>{getMobileClampedLabel(group.canvasLabel, 26)}</div>
                       <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
                     </div>
                   </button>
@@ -476,7 +483,7 @@ export function CanvasSidebar({
                         {areAllPagesSelected ? <Check size={12} /> : null}
                       </div>
                     )}
-                    <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
+                    <div className="min-w-0 flex-1 truncate" title={group.canvasLabel}>{getMobileClampedLabel(group.canvasLabel, 26)}</div>
                     <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
                   </div>
                 </button>
@@ -495,7 +502,7 @@ export function CanvasSidebar({
                           <div className={`w-3.5 h-3.5 border flex items-center justify-center ${isSelectedPage ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
                             {isSelectedPage ? <Check size={10} /> : null}
                           </div>
-                          <span className="truncate">{page.pageLabel}</span>
+                          <span className="min-w-0 flex-1 truncate" title={page.pageLabel}>{getMobileClampedLabel(page.pageLabel, 22)}</span>
                         </button>
                       );
                     })}

@@ -136,6 +136,13 @@
   }
 }
 
+@media (max-width: 767px) {
+  .toolbar-btn {
+    min-width: 2.25rem;
+    min-height: 2.25rem;
+  }
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;

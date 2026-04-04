@@ -195,18 +195,22 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
 
   const handleWheel = useCallback(
     (e: WheelEvent) => {
+      const canPinchZoom = e.ctrlKey || e.metaKey;
+      if (canPinchZoom) {
+        e.preventDefault();
+        const state = useCanvasStore.getState();
+        const delta = -e.deltaY * 0.002;
+        state.setZoom(state.zoom * (1 + delta));
+        return;
+      }
+
       if (canNativeScrollFromTarget(e.target, e.deltaX, e.deltaY)) {
         return;
       }
+
       e.preventDefault();
       const state = useCanvasStore.getState();
-      const canPinchZoom = e.ctrlKey || e.metaKey;
-      if (canPinchZoom) {
-        const delta = -e.deltaY * 0.002;
-        state.setZoom(state.zoom * (1 + delta));
-      } else {
-        state.setPan({ x: state.pan.x - e.deltaX, y: state.pan.y - e.deltaY });
-      }
+      state.setPan({ x: state.pan.x - e.deltaX, y: state.pan.y - e.deltaY });
     },
     []
   );
@@ -214,8 +218,8 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
+    el.addEventListener('wheel', handleWheel, { passive: false, capture: true });
+    return () => el.removeEventListener('wheel', handleWheel, true);
   }, [handleWheel]);
 
   const handleMouseDown = (e: React.MouseEvent) => {

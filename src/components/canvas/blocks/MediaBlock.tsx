@@ -1,6 +1,7 @@
 import { useCanvasStore, CanvasBlock } from '@/store/canvasStore';
-import { ImageIcon, Play, Pause, Volume2, VolumeX, ExternalLink } from 'lucide-react';
+import { ImageIcon, Play, Pause, Volume2, VolumeX } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 function normalizeUrl(raw: string) {
   if (!raw) return '';
@@ -53,15 +54,15 @@ function toEmbedUrl(url: string) {
 
     if (host.includes('youtube.com')) {
       const id = u.searchParams.get('v');
-      return id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&loop=1&playlist=${id}&rel=0&playsinline=1` : '';
+      return id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=0&loop=1&playlist=${id}&rel=0&playsinline=1` : '';
     }
     if (host.includes('youtu.be')) {
       const id = u.pathname.replace('/', '');
-      return id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&loop=1&playlist=${id}&rel=0&playsinline=1` : '';
+      return id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=0&loop=1&playlist=${id}&rel=0&playsinline=1` : '';
     }
     if (host.includes('vimeo.com')) {
       const id = u.pathname.split('/').filter(Boolean).pop();
-      return id ? `https://player.vimeo.com/video/${id}?autoplay=1&muted=1&loop=1&autopause=0` : '';
+      return id ? `https://player.vimeo.com/video/${id}?autoplay=1&muted=0&loop=1&autopause=0` : '';
     }
 
     if (host.includes('twitter.com') || host.includes('x.com')) {
@@ -121,6 +122,25 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function hasVideoAudioTrack(video: HTMLVideoElement) {
+  const anyVideo = video as HTMLVideoElement & {
+    audioTracks?: { length?: number };
+    mozHasAudio?: boolean;
+    webkitAudioDecodedByteCount?: number;
+  };
+
+  if (anyVideo.audioTracks && typeof anyVideo.audioTracks.length === 'number') {
+    return anyVideo.audioTracks.length > 0;
+  }
+  if (typeof anyVideo.mozHasAudio === 'boolean') {
+    return anyVideo.mozHasAudio;
+  }
+  if (typeof anyVideo.webkitAudioDecodedByteCount === 'number') {
+    return anyVideo.webkitAudioDecodedByteCount > 0;
+  }
+  return true;
+}
+
 function getMediaAutoSize(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio') {
   try {
     const u = new URL(url);
@@ -160,11 +180,14 @@ function getMediaAutoSize(url: string, blobKind: 'unknown' | 'video' | 'image' |
 
 export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
+  const isMobile = useIsMobile();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(true);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
+  const [videoHasAudio, setVideoHasAudio] = useState(true);
   const [blobMediaKind, setBlobMediaKind] = useState<'unknown' | 'video' | 'image' | 'audio'>('unknown');
   const lastAutoSizeUrl = useRef('');
 
@@ -195,12 +218,22 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
     }
   };
 
+  const toggleAudioPlay = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (audioRef.current) {
+      if (audioRef.current.paused) {
+        void audioRef.current.play().catch(() => undefined);
+        setPlaying(true);
+      } else {
+        audioRef.current.pause();
+        setPlaying(false);
+      }
+    }
+  };
+
   const toggleMute = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (videoRef.current) {
-      videoRef.current.muted = !videoRef.current.muted;
-      setMuted(videoRef.current.muted);
-    }
+    setMuted((prev) => !prev);
   };
 
   const normalizedUrl = normalizeUrl(block.url || '');
@@ -216,6 +249,17 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
       setBlobMediaKind('unknown');
     }
   }, [normalizedUrl]);
+
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.volume = volume;
+      videoRef.current.muted = muted;
+    }
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
+      audioRef.current.muted = muted;
+    }
+  }, [muted, volume, normalizedUrl]);
 
   useEffect(() => {
     if (readOnly) return;
@@ -244,6 +288,11 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
     if (!audio) return;
     audio.currentTime = 0;
     void audio.play().catch(() => undefined);
+  };
+
+  const blockMediaSurfaceInteraction = (e: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
   };
 
   return (
@@ -275,21 +324,18 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
           <div className="flex-1 min-h-0 relative">
             <iframe
               src={embedUrl}
-              className="w-full h-full border-0"
+              className="w-full h-full border-0 pointer-events-none"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
               title="live-media-preview"
             />
-            <a
-              href={normalizedUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="absolute top-1 right-1 w-5 h-5 bg-foreground/70 text-background inline-flex items-center justify-center hover:bg-foreground transition-colors"
-              onClick={(e) => e.stopPropagation()}
-              title="Open source"
-            >
-              <ExternalLink size={10} />
-            </a>
+            {isMobile && (
+              <div
+                className="absolute inset-0 z-[1]"
+                onPointerDown={blockMediaSurfaceInteraction}
+                onClick={blockMediaSurfaceInteraction}
+              />
+            )}
           </div>
         ) : isVid ? (
           <div className="relative flex-1">
@@ -301,12 +347,23 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
               autoPlay
               muted={muted}
               playsInline
+              onClick={(e) => {
+                e.stopPropagation();
+                if (videoRef.current?.paused) {
+                  void videoRef.current.play().catch(() => undefined);
+                  setPlaying(true);
+                } else {
+                  videoRef.current?.pause();
+                  setPlaying(false);
+                }
+              }}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
               onEnded={handleVideoEnded}
               onLoadedMetadata={(e) => {
                 if (readOnly) return;
                 const v = e.currentTarget;
+                setVideoHasAudio(hasVideoAudioTrack(v));
                 if (!v.videoWidth || !v.videoHeight) return;
                 const ratio = v.videoWidth / v.videoHeight;
                 const newW = clamp(v.videoWidth, 280, 760);
@@ -314,40 +371,78 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
                 updateBlock(block.id, { width: newW, height: newH });
               }}
             />
-            <div className="absolute bottom-1 right-1 flex gap-1">
-              <button onClick={togglePlay} className="w-5 h-5 bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors">
-                {playing ? <Pause size={10} /> : <Play size={10} />}
+            <div className="absolute bottom-1 right-1 z-[2] flex items-center gap-1 bg-foreground/45 px-1 py-1 backdrop-blur-sm">
+              <button onClick={togglePlay} className={`${isMobile ? 'w-6 h-6' : 'w-5 h-5'} bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors`}>
+                {playing ? <Pause size={isMobile ? 11 : 10} /> : <Play size={isMobile ? 11 : 10} />}
               </button>
-              <button onClick={toggleMute} className="w-5 h-5 bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors">
-                {muted ? <VolumeX size={10} /> : <Volume2 size={10} />}
-              </button>
+              {videoHasAudio && (
+                <>
+                  <button onClick={toggleMute} className={`${isMobile ? 'w-6 h-6' : 'w-5 h-5'} bg-foreground/70 text-background flex items-center justify-center hover:bg-foreground transition-colors`}>
+                    {muted ? <VolumeX size={isMobile ? 11 : 10} /> : <Volume2 size={isMobile ? 11 : 10} />}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={muted ? 0 : volume}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setVolume(next);
+                      if (next > 0 && muted) setMuted(false);
+                    }}
+                    className={`${isMobile ? 'w-16' : 'w-14'} accent-foreground`}
+                  />
+                </>
+              )}
             </div>
           </div>
         ) : isAudioUrl ? (
-          <div className="flex-1 min-h-0 border border-border bg-secondary/20 px-2 py-3 flex items-center justify-center">
+          <div className="flex-1 min-h-0 border border-border bg-secondary/20 px-2 py-3 flex flex-col items-center justify-center gap-2">
             <audio
               ref={audioRef}
               src={normalizedUrl}
-              className="w-full"
-              controls
+              className="hidden"
               autoPlay
               loop
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
               onEnded={handleAudioEnded}
             />
+            <div className="flex items-center gap-2 w-full max-w-[260px]">
+              <button onClick={toggleAudioPlay} className={`${isMobile ? 'w-7 h-7' : 'w-6 h-6'} bg-foreground/80 text-background flex items-center justify-center hover:bg-foreground transition-colors`}>
+                {playing ? <Pause size={isMobile ? 12 : 11} /> : <Play size={isMobile ? 12 : 11} />}
+              </button>
+              <button onClick={toggleMute} className={`${isMobile ? 'w-7 h-7' : 'w-6 h-6'} bg-foreground/80 text-background flex items-center justify-center hover:bg-foreground transition-colors`}>
+                {muted ? <VolumeX size={isMobile ? 12 : 11} /> : <Volume2 size={isMobile ? 12 : 11} />}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={muted ? 0 : volume}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setVolume(next);
+                  if (next > 0 && muted) setMuted(false);
+                }}
+                className="flex-1 accent-foreground"
+              />
+            </div>
           </div>
         ) : isGifUrl ? (
           <img
             src={normalizedUrl}
             alt={block.content || 'media'}
-            className="flex-1 w-full h-full object-contain cursor-pointer"
-            onClick={(e) => { e.stopPropagation(); window.open(normalizedUrl, '_blank'); }}
+            className="flex-1 w-full h-full object-contain"
           />
         ) : isImageUrl ? (
           <img
             src={normalizedUrl}
             alt={block.content || 'media'}
-            className="flex-1 w-full h-full object-contain cursor-pointer"
-            onClick={(e) => { e.stopPropagation(); window.open(normalizedUrl, '_blank'); }}
+            className="flex-1 w-full h-full object-contain"
             onLoad={(e) => {
               if (!readOnly) {
                 const img = e.target as HTMLImageElement;
@@ -361,17 +456,14 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
           />
         ) : (
           <div className="flex-1 min-h-0 relative">
-            <iframe src={normalizedUrl} className="w-full h-full border-0" title="live-media-preview" />
-            <a
-              href={normalizedUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="absolute top-1 right-1 w-5 h-5 bg-foreground/70 text-background inline-flex items-center justify-center hover:bg-foreground transition-colors"
-              onClick={(e) => e.stopPropagation()}
-              title="Open source"
-            >
-              <ExternalLink size={10} />
-            </a>
+            <iframe src={normalizedUrl} className="w-full h-full border-0 pointer-events-none" title="live-media-preview" />
+            {isMobile && (
+              <div
+                className="absolute inset-0 z-[1]"
+                onPointerDown={blockMediaSurfaceInteraction}
+                onClick={blockMediaSurfaceInteraction}
+              />
+            )}
           </div>
         )
       ) : (

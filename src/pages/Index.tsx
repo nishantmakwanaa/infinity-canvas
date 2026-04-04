@@ -920,11 +920,25 @@ const Index = () => {
       {showHeaderAndBars && (
         isMobile ? (
           <div
-            className="fixed right-0 z-50 px-1 py-2 bg-transparent border border-border border-r-0 select-none pointer-events-none"
-            style={{ bottom: 'calc(1rem + 44px)' }}
+            className="fixed right-1 z-50 bg-background/40 border border-border backdrop-blur-[1px] select-none pointer-events-none"
+            style={{
+              bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px) + 46px)',
+              padding: '4px 3px',
+              transform: 'translateX(20%)',
+            }}
           >
-            <span className="block text-[8px] font-mono text-muted-foreground leading-tight">MADE BY</span>
-            <span className="block text-[10px] font-mono font-bold text-foreground leading-tight">NISHANT</span>
+            <span
+              className="block text-[7px] font-mono text-muted-foreground leading-tight tracking-[0.08em]"
+              style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+            >
+              MADE BY
+            </span>
+            <span
+              className="block mt-1 text-[9px] font-mono font-bold text-foreground leading-tight"
+              style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+            >
+              NISHANT
+            </span>
           </div>
         ) : (
           <div className="fixed bottom-4 right-4 z-50 px-3 py-1.5 bg-transparent border border-border select-none pointer-events-none">

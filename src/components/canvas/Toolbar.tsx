@@ -95,11 +95,13 @@ export function Toolbar({
   };
 
   const toolbarCenterPercent = leftOffsetPercent + (100 - leftOffsetPercent) / 2;
-  const selectorBottom = '1rem';
+  const selectorBottom = isMobile ? 'calc(1rem + env(safe-area-inset-bottom, 0px))' : '1rem';
   const selectorHeight = isMobile ? 36 : 44;
   const zoomHeight = 40;
   const zoomBottom = `calc(${selectorBottom} + ${(selectorHeight - zoomHeight) / 2}px)`;
-  const actionBarBottom = isMobile ? 'calc(1rem + 48px)' : 'calc(1rem + 52px)';
+  const actionBarBottom = isMobile
+    ? 'calc(1rem + env(safe-area-inset-bottom, 0px) + 48px)'
+    : 'calc(1rem + 52px)';
 
   useEffect(() => {
     if (isMobile) {

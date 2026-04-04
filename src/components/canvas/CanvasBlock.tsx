@@ -6,6 +6,7 @@ import { TodoBlock } from './blocks/TodoBlock';
 import { MediaBlock } from './blocks/MediaBlock';
 import { X } from 'lucide-react';
 import { getBlockForegroundColor, getBlockMutedColor } from '@/lib/blockColors';
+import { useIsMobile } from '@/hooks/use-mobile';
 
 interface Props {
   block: CanvasBlock;
@@ -21,31 +22,84 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
   const selectedBlockId = useCanvasStore((s) => s.selectedBlockId);
   const selectedBlockIds = useCanvasStore((s) => s.selectedBlockIds);
   const zoom = useCanvasStore((s) => s.zoom);
+  const isMobile = useIsMobile();
   const isSelected = selectedBlockId === block.id || selectedBlockIds.includes(block.id);
   const [isHovered, setIsHovered] = useState(false);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, origX: 0, origY: 0 });
 
-  const handleDragStart = (e: React.MouseEvent) => {
-    if (readOnly) return;
-    const t = e.target as HTMLElement;
-    if (t.dataset.resize || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'VIDEO' || t.closest('button')) return;
+  const handleBlockWheelCapture = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
     e.stopPropagation();
-    selectBlock(block.id);
+    const state = useCanvasStore.getState();
+    const delta = -e.deltaY * 0.002;
+    state.setZoom(state.zoom * (1 + delta));
+  };
+
+  const isInteractiveTarget = (t: HTMLElement) => {
+    return Boolean(
+      t.dataset.resize
+      || t.tagName === 'INPUT'
+      || t.tagName === 'TEXTAREA'
+      || t.tagName === 'VIDEO'
+      || t.tagName === 'AUDIO'
+      || t.tagName === 'IFRAME'
+      || t.closest('button')
+      || t.closest('a')
+    );
+  };
+
+  const startPointerDrag = (e: React.PointerEvent<HTMLElement>) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+    // On touch devices, first tap selects; dragging starts on subsequent gesture.
+    if (e.pointerType === 'touch' && !isSelected) return;
+
     dragRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, origX: block.x, origY: block.y };
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: PointerEvent) => {
       if (!dragRef.current.dragging) return;
       updateBlock(block.id, {
         x: dragRef.current.origX + (ev.clientX - dragRef.current.startX) / zoom,
         y: dragRef.current.origY + (ev.clientY - dragRef.current.startY) / zoom,
       });
     };
-    const onUp = () => { dragRef.current.dragging = false; window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    const onUp = () => {
+      dragRef.current.dragging = false;
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const handleBlockPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (readOnly) return;
+    const t = e.target as HTMLElement;
+    if (isInteractiveTarget(t)) return;
+
+    e.stopPropagation();
+    selectBlock(block.id);
+
+    // Desktop keeps drag-from-block behavior; mobile drag starts only from header.
+    if (!isMobile) {
+      startPointerDrag(e);
+    }
+  };
+
+  const handleHeaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (readOnly) return;
+    const t = e.target as HTMLElement;
+    if (t.closest('button')) return;
+
+    e.stopPropagation();
+    selectBlock(block.id);
+    startPointerDrag(e);
   };
 
   const handleResize = (e: React.MouseEvent, dir: ResizeDir) => {
-    if (readOnly) return;
+    if (readOnly || isMobile) return;
     e.stopPropagation();
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
@@ -90,12 +144,16 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
         height: block.height,
         backgroundColor: block.backgroundColor || undefined,
       }}
-      onMouseDown={handleDragStart}
+      onPointerDown={handleBlockPointerDown}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onWheelCapture={handleBlockWheelCapture}
     >
-      <div className={`flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 ${readOnly ? '' : 'cursor-move'}`}>
-        <span className="text-[10px] font-mono uppercase tracking-widest" style={{ color: mutedColor || undefined }}>{typeLabel}</span>
+      <div
+        className={`flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 ${readOnly ? '' : 'cursor-move'}`}
+        onPointerDown={handleHeaderPointerDown}
+      >
+        <span className="text-[10px] font-mono uppercase tracking-widest truncate" style={{ color: mutedColor || undefined }}>{typeLabel}</span>
         {!readOnly && (
           <button
             onClick={(e) => { e.stopPropagation(); deleteBlock(block.id); }}
@@ -111,7 +169,7 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
       </div>
 
       {/* Resize handles - full side edges (no corner directions) */}
-      {!readOnly && (isSelected || isHovered) && (
+      {!readOnly && !isMobile && (isSelected || isHovered) && (
         <>
           <div data-resize="true" className="absolute top-0 left-2 right-2 h-3 cursor-n-resize hover:bg-foreground/10" onMouseDown={(e) => handleResize(e, 'n')} />
           <div data-resize="true" className="absolute bottom-0 left-2 right-2 h-3 cursor-s-resize hover:bg-foreground/10" onMouseDown={(e) => handleResize(e, 's')} />
