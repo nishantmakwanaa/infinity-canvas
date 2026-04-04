@@ -45,7 +45,119 @@ export function AppMenu({ onClose, isMobile = false, onOpenShortcuts, onOpenExte
     if (imported) onClose();
   };
 
-  const flyoutSideClass = isMobile ? 'right-full mr-1 left-auto' : 'left-full';
+  const desktopFlyoutSideClass = 'left-full';
+
+  const exportButtons = (
+    <>
+      <button onClick={() => { exportCanvasAsPng(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
+      <button onClick={() => { exportCanvasAsSvg(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
+      <button onClick={() => { exportCanvasAsCnvs(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
+    </>
+  );
+
+  if (isMobile) {
+    return (
+      <div className="fixed left-1/2 top-16 z-50 w-[92vw] max-w-[720px] -translate-x-1/2 border border-border bg-card shadow-lg" data-no-translate="true">
+        <div className={`grid ${showLanguage ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          <div className="min-w-0 py-1">
+            <button
+              onClick={() => setShowExport((prev) => !prev)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+            >
+              <span className="flex items-center gap-2"><Download size={12} /> Export</span>
+              <ChevronRight size={10} className={`transition-transform ${showExport ? 'rotate-90' : ''}`} />
+            </button>
+            {showExport && <div className="border-y border-border bg-muted/30">{exportButtons}</div>}
+
+            <button
+              onClick={() => importInputRef.current?.click()}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+            >
+              <Download size={12} /> Load .cnvs file
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".cnvs,application/json"
+              className="hidden"
+              onChange={(e) => {
+                void handleImportCnvs(e.target.files?.[0]);
+                e.currentTarget.value = '';
+              }}
+            />
+
+            <button
+              onClick={cycleTheme}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+              title="Toggle theme (Auto/Light/Dark)"
+            >
+              <span className="flex items-center gap-2">
+                <themeMeta.Icon size={12} /> Theme
+              </span>
+              <span className="text-muted-foreground">{themeMeta.label}</span>
+            </button>
+
+            <button
+              onClick={() => setShowLanguage((prev) => !prev)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+            >
+              <span className="flex items-center gap-2"><Globe size={12} /> Language</span>
+              <span className="text-[10px] text-muted-foreground">{showLanguage ? 'Hide' : 'Open'}</span>
+            </button>
+
+            <div className="h-px bg-border my-1" />
+
+            <button
+              onClick={() => {
+                onClose();
+                onOpenExtension();
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+            >
+              <Puzzle size={12} /> Add to browser
+            </button>
+
+            <button
+              onClick={() => { onClose(); onOpenShortcuts(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
+            >
+              <Keyboard size={12} /> Keyboard shortcuts...
+            </button>
+          </div>
+
+          {showLanguage && (
+            <div className="min-w-0 border-l border-border bg-muted/20 p-2" data-no-translate="true">
+              <input
+                value={languageQuery}
+                onChange={(e) => setLanguageQuery(e.target.value)}
+                className="h-8 w-full border border-border bg-card px-2 text-xs font-mono text-foreground outline-none focus:border-foreground"
+                placeholder="Search language"
+              />
+              <div className="mt-2 max-h-72 overflow-auto no-scrollbar border border-border bg-card">
+                {filteredLanguages.map((item) => (
+                  <button
+                    key={item.code}
+                    onClick={() => {
+                      setLanguage(item.code);
+                      setAppLanguage(item.code);
+                      onClose();
+                    }}
+                    className={`w-full px-2 py-1.5 text-left text-xs font-mono transition-colors ${
+                      language === item.code
+                        ? 'bg-foreground text-background'
+                        : 'hover:bg-accent'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -63,11 +175,7 @@ export function AppMenu({ onClose, isMobile = false, onOpenShortcuts, onOpenExte
             <ChevronRight size={10} />
           </button>
           {showExport && (
-            <div className={`absolute top-0 z-[60] w-32 border border-border bg-card py-1 ${flyoutSideClass}`}>
-              <button onClick={() => { exportCanvasAsPng(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">PNG</button>
-              <button onClick={() => { exportCanvasAsSvg(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">SVG</button>
-              <button onClick={() => { exportCanvasAsCnvs(); onClose(); }} className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-accent">CNVS</button>
-            </div>
+            <div className={`absolute top-0 z-[60] w-32 border border-border bg-card py-1 ${desktopFlyoutSideClass}`}>{exportButtons}</div>
           )}
         </div>
 
@@ -113,7 +221,7 @@ export function AppMenu({ onClose, isMobile = false, onOpenShortcuts, onOpenExte
           </button>
 
           {showLanguage && (
-            <div className={`absolute top-0 z-[60] w-56 border border-border bg-card p-2 shadow-lg ${flyoutSideClass}`} data-no-translate="true">
+            <div className={`absolute top-0 z-[60] w-56 border border-border bg-card p-2 shadow-lg ${desktopFlyoutSideClass}`} data-no-translate="true">
               <input
                 value={languageQuery}
                 onChange={(e) => setLanguageQuery(e.target.value)}
