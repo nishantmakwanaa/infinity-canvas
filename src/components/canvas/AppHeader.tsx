@@ -165,6 +165,36 @@ export function AppHeader({
     };
   };
 
+  const parseUpsertShareRow = (raw: unknown) => {
+    if (raw == null) return null;
+    if (typeof raw === 'string') {
+      try {
+        return parseUpsertShareRow(JSON.parse(raw));
+      } catch {
+        return null;
+      }
+    }
+    if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+      return raw as {
+        share_token?: string;
+        access_level?: string;
+        owner_username?: string;
+        canvas_name?: string;
+        page_name?: string;
+      };
+    }
+    if (Array.isArray(raw) && raw[0] && typeof raw[0] === 'object') {
+      return raw[0] as {
+        share_token?: string;
+        access_level?: string;
+        owner_username?: string;
+        canvas_name?: string;
+        page_name?: string;
+      };
+    }
+    return null;
+  };
+
   const publishCanvas = async (accessLevel: 'viewer' | 'editor') => {
     if (!user) return null;
     if (!canShareCurrentCanvas) {
@@ -176,7 +206,7 @@ export function AppHeader({
       const context = await resolveShareContext();
       if (!context) return null;
 
-      let upsertedShare: any = null;
+      let upsertedShare: ReturnType<typeof parseUpsertShareRow> = null;
       let rpc = await supabase.rpc('upsert_canvas_share', {
         p_canvas_id: context.canvasId,
         p_access_level: accessLevel,
@@ -204,29 +234,35 @@ export function AppHeader({
       }
 
       if (rpc?.error) {
-        const finalMessage = String(
-          (rpc?.error as any)?.message
-          || (rpc?.error as any)?.details
-          || (rpc?.error as any)?.hint
-          || ''
-        ).toLowerCase();
-        if (finalMessage.includes('not allowed')) {
+        const errText = String(
+          (rpc.error as any)?.message
+          || (rpc.error as any)?.details
+          || (rpc.error as any)?.hint
+          || 'Publish failed'
+        );
+        const finalMessage = errText.toLowerCase();
+        if (finalMessage.includes('not allowed') || finalMessage.includes('42501')) {
           toast.error('Only the canvas owner can publish links');
           return null;
         }
+        if (finalMessage.includes('not authenticated')) {
+          toast.error('Sign in again, then publish.');
+          return null;
+        }
+        toast.error(errText.length > 120 ? `${errText.slice(0, 117)}…` : errText);
+        return null;
       }
 
-      if (rpc?.data) {
-        upsertedShare = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
-      }
+      upsertedShare = parseUpsertShareRow(rpc.data);
 
-      const shareToken = (upsertedShare as any)?.share_token;
+      const shareToken = upsertedShare?.share_token;
       if (!shareToken) {
         toast.error('Failed to publish share link');
         return null;
       }
 
-      const resolvedAccess = ((upsertedShare as any)?.access_level as 'viewer' | 'editor' | undefined) || accessLevel;
+      const acc = String(upsertedShare?.access_level || '').toLowerCase();
+      const resolvedAccess: 'viewer' | 'editor' = acc === 'editor' ? 'editor' : acc === 'viewer' ? 'viewer' : accessLevel;
       const nextShareUrl = buildShareUrl(context.routeOwner, shareToken, resolvedAccess, user.id);
 
       setShareAccessLevel(resolvedAccess);

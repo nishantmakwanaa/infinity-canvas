@@ -317,13 +317,7 @@ export type Database = {
           p_canvas_id: string
           p_access_level?: string
         }
-        Returns: {
-          access_level: string
-          canvas_name: string
-          owner_username: string
-          page_name: string
-          share_token: string
-        }[]
+        Returns: Json
       }
     }
     Enums: {
