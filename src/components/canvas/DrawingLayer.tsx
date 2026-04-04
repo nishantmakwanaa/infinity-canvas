@@ -3,6 +3,8 @@ import { useCanvasStore, DrawingElement, SIZE_MAP, FONT_MAP, genId } from '@/sto
 
 const DRAWING_TOOLS = ['pencil', 'eraser', 'text', 'shape', 'line', 'arrow'];
 const MIN_FREEHAND_POINT_DISTANCE = 0.7;
+const MIN_FREEHAND_POINT_DISTANCE_PEN = 0.45;
+const MIN_FREEHAND_POINT_DISTANCE_TOUCH = 0.55;
 const MIN_SHAPE_DISTANCE = 3;
 const ERASER_HIT_STROKE = 16;
 const TOUCH_FALLBACK_POINTER_ID = -1;
@@ -417,7 +419,13 @@ export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
         ? coalesced.map((evt) => toCanvasFromClient(evt.clientX, evt.clientY))
         : [pos];
 
-      const minDistance = MIN_FREEHAND_POINT_DISTANCE / Math.max(0.2, zoom);
+      const pointerType = (nativeEvent.pointerType || '').toLowerCase();
+      const baseDistance = pointerType === 'pen'
+        ? MIN_FREEHAND_POINT_DISTANCE_PEN
+        : pointerType === 'touch'
+          ? MIN_FREEHAND_POINT_DISTANCE_TOUCH
+          : MIN_FREEHAND_POINT_DISTANCE;
+      const minDistance = baseDistance / Math.max(0.2, zoom);
       for (const point of sourcePoints) {
         const lastPoint = pathRef.current[pathRef.current.length - 1];
         if (!lastPoint || Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) >= minDistance) {

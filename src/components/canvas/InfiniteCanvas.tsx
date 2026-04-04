@@ -504,7 +504,11 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       ref={containerRef}
       data-canvas="true"
       className={`fixed inset-0 canvas-dots overflow-hidden select-none ${isDrawing ? 'cursor-crosshair' : isHandTool ? 'cursor-grab' : 'cursor-default'}`}
-      style={{ ...dotOffset, left: `${leftOffsetPercent}%` }}
+      style={{
+        ...dotOffset,
+        left: `${leftOffsetPercent}%`,
+        touchAction: isDrawing || isHandTool ? 'none' : 'pan-x pan-y pinch-zoom',
+      }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}

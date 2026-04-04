@@ -3,6 +3,7 @@ import { Toolbar } from '@/components/canvas/Toolbar';
 import { AppHeader } from '@/components/canvas/AppHeader';
 import { ToolSettingsPanel } from '@/components/canvas/ToolSettingsPanel';
 import { CanvasSidebar } from '@/components/canvas/CanvasSidebar';
+import { AuthGateDialog } from '@/components/canvas/AuthGateDialog';
 import { setThemePreference, useThemeTime } from '@/hooks/useThemeTime';
 import { useAuth } from '@/hooks/useAuth';
 import { useCanvasSync } from '@/hooks/useCanvasSync';
@@ -21,7 +22,7 @@ import { useLocation } from 'react-router-dom';
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
 const DEFAULT_SITE_TITLE = 'CNVS - Your Second Brain Canvas';
 
-type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found';
+type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found' | 'auth-required';
 
 interface CanvasSnapshot {
   blocks: any[];
@@ -59,10 +60,14 @@ const Index = () => {
 
   const {
     canvases,
+    sharedCanvases,
+    shareAccessByCanvasId,
+    joinedCanvasAccessByCanvasId,
     currentCanvasId,
     currentCanvasName,
     createCanvas,
     selectCanvas,
+    markJoinedCanvasAccess,
     deleteCanvases,
     renameCanvas,
     renamePage,
@@ -78,16 +83,20 @@ const Index = () => {
   const isRestoringHistoryRef = useRef(false);
   const lastSnapshotRef = useRef<CanvasSnapshot | null>(null);
   const lastSerializedSnapshotRef = useRef('');
-  const routeCanvasAppliedRef = useRef<string | null>(null);
   const isMobile = useIsMobile();
   const [mobileToolSettingsOpen, setMobileToolSettingsOpen] = useState(false);
 
   const isLoggedIn = Boolean(session?.user?.id);
+  const isShareEditRoute = parsedApiRequest?.kind === 'share-edit';
+  const showHomeAuthGate = !loading && !isLoggedIn && !rawUserToken;
+  const showShareEditAuthGate = !loading && !isLoggedIn && isShareEditRoute;
   const isReadOnlyMode = routeMode === 'readonly';
   const isRouteLoading = routeMode === 'loading';
+  const isAuthRequiredMode = routeMode === 'auth-required';
   const isNotFoundMode = routeMode === 'not-found';
-  const isEditorMode = !isReadOnlyMode && !isRouteLoading && !isNotFoundMode;
-  const activeCanvasIdForCollab = currentCanvasId || routeCanvasId;
+  const isEditorMode = routeMode === 'home' || routeMode === 'editable';
+  const effectiveCurrentCanvasId = rawUserToken ? (routeCanvasId || currentCanvasId) : currentCanvasId;
+  const activeCanvasIdForCollab = rawUserToken ? (routeCanvasId || currentCanvasId) : (currentCanvasId || routeCanvasId);
   const collaborationIdentity = useMemo(
     () => (user
       ? {
@@ -266,6 +275,14 @@ const Index = () => {
       return;
     }
 
+    if (parsedApiRequest.kind === 'share-edit' && !session?.user?.id) {
+      setRouteMode('auth-required');
+      setRouteCanvasId(null);
+      setRouteCanvasName(null);
+      setRouteError('Login required to edit shared canvas');
+      return;
+    }
+
     let cancelled = false;
     setRouteMode('loading');
     setRouteCanvasId(null);
@@ -301,6 +318,9 @@ const Index = () => {
       const shareAccess = String((row as any)?.share_access || '').toLowerCase();
       const isShareRoute = Boolean((row as any)?.is_share);
       const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
+      if (isShareRoute && session?.user?.id && row?.canvas_id) {
+        markJoinedCanvasAccess(row.canvas_id, isShareEditLink ? 'editor' : 'viewer');
+      }
       const canEdit = isShareRoute
         ? Boolean(isShareEditLink && session?.user?.id && (Boolean(row.can_edit) || shareAccess === 'editor'))
         : Boolean(row.can_edit);
@@ -327,18 +347,13 @@ const Index = () => {
     return () => {
       cancelled = true;
     };
-  }, [navigate, parsedApiRequest, rawUserToken, session?.user?.id]);
-
-  useEffect(() => {
-    routeCanvasAppliedRef.current = null;
-  }, [routeCanvasId, rawUserToken, location.search]);
+  }, [markJoinedCanvasAccess, navigate, parsedApiRequest, rawUserToken, session?.user?.id]);
 
   useEffect(() => {
     if (routeMode !== 'editable' || !routeCanvasId || !syncEnabled) return;
-    if (routeCanvasAppliedRef.current === routeCanvasId) return;
-    routeCanvasAppliedRef.current = routeCanvasId;
+    if (currentCanvasId === routeCanvasId) return;
     void selectCanvas(routeCanvasId);
-  }, [routeMode, routeCanvasId, selectCanvas, syncEnabled]);
+  }, [currentCanvasId, routeMode, routeCanvasId, selectCanvas, syncEnabled]);
 
   useEffect(() => {
     if (!isMobile) {
@@ -545,6 +560,16 @@ const Index = () => {
     );
   }
 
+  if (showHomeAuthGate || showShareEditAuthGate || isAuthRequiredMode) {
+    return (
+      <AuthGateDialog
+        mode={showShareEditAuthGate || isAuthRequiredMode ? 'share-edit' : 'home'}
+        loading={loading}
+        onSignIn={signInWithGoogle}
+      />
+    );
+  }
+
   return (
     <>
       <Profiler id="infinite-canvas" onRender={onCanvasProfilerRender}>
@@ -562,7 +587,7 @@ const Index = () => {
           onSignIn={signInWithGoogle}
           readOnlyMode={isReadOnlyMode}
           forceShowCollaboratorsButton={Boolean(rawUserToken && user?.id)}
-          currentCanvasId={currentCanvasId}
+          currentCanvasId={effectiveCurrentCanvasId}
           currentCanvasName={activeCanvasName}
           currentCanvasLabel={currentParsedName.canvasLabel}
           currentPageLabel={currentParsedName.pageLabel}
@@ -594,7 +619,10 @@ const Index = () => {
           <CanvasSidebar
             loggedInUserId={session?.user?.id ?? null}
             canvases={canvases}
-            currentCanvasId={currentCanvasId}
+            sharedCanvases={sharedCanvases}
+            shareAccessByCanvasId={shareAccessByCanvasId}
+            joinedCanvasAccessByCanvasId={joinedCanvasAccessByCanvasId}
+            currentCanvasId={effectiveCurrentCanvasId}
             onCreateCanvas={() => createCanvas()}
             onSelectCanvas={(id) => {
               selectCanvas(id);

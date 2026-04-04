@@ -247,6 +247,7 @@ using (
   or exists (
     select 1 from public.shared_canvases sc
     where sc.canvas_id = canvases.id
+      and auth.uid() is not null
   )
 );
 
@@ -293,7 +294,7 @@ using (auth.uid() = user_id);
 drop policy if exists "shared_canvases_select_any" on public.shared_canvases;
 create policy "shared_canvases_select_any"
 on public.shared_canvases for select
-using (true);
+using (auth.uid() is not null);
 
 drop policy if exists "shared_canvases_insert_owner" on public.shared_canvases;
 create policy "shared_canvases_insert_owner"
@@ -341,10 +342,10 @@ using (
 
 grant usage on schema public to anon, authenticated, service_role;
 
-grant select on table public.canvases to anon;
+revoke select on table public.canvases from anon;
 grant select, insert, update, delete on table public.canvases to authenticated;
 
-grant select on table public.shared_canvases to anon;
+revoke select on table public.shared_canvases from anon;
 grant select, insert, update, delete on table public.shared_canvases to authenticated;
 
 grant all on table public.canvases to service_role;

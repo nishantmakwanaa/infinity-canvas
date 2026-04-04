@@ -57,7 +57,10 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   const [isDarkMode, setIsDarkMode] = useState(() =>
     typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
   );
-  const [sharePanelBottom, setSharePanelBottom] = useState<number | null>(null);
+  const [headerOverlayBottoms, setHeaderOverlayBottoms] = useState<{ share: number | null; collaborators: number | null }>({
+    share: null,
+    collaborators: null,
+  });
 
   const activeSelectedBlockId = selectedBlockIds[0] || selectedBlockId;
   const selectedBlock = activeSelectedBlockId
@@ -82,16 +85,26 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
     if (typeof window === 'undefined') return;
     const onShareVisibility = (event: Event) => {
       const custom = event as CustomEvent<{ open?: boolean; bottom?: number | null }>;
-      if (!custom?.detail?.open) {
-        setSharePanelBottom(null);
-        return;
-      }
-      const nextBottom = typeof custom.detail.bottom === 'number' ? custom.detail.bottom : null;
-      setSharePanelBottom(nextBottom);
+      const nextBottom = custom?.detail?.open && typeof custom.detail.bottom === 'number'
+        ? custom.detail.bottom
+        : null;
+      setHeaderOverlayBottoms((prev) => ({ ...prev, share: nextBottom }));
+    };
+
+    const onCollaboratorVisibility = (event: Event) => {
+      const custom = event as CustomEvent<{ open?: boolean; bottom?: number | null }>;
+      const nextBottom = custom?.detail?.open && typeof custom.detail.bottom === 'number'
+        ? custom.detail.bottom
+        : null;
+      setHeaderOverlayBottoms((prev) => ({ ...prev, collaborators: nextBottom }));
     };
 
     window.addEventListener('cnvs-share-menu-visibility', onShareVisibility as EventListener);
-    return () => window.removeEventListener('cnvs-share-menu-visibility', onShareVisibility as EventListener);
+    window.addEventListener('cnvs-collaborator-menu-visibility', onCollaboratorVisibility as EventListener);
+    return () => {
+      window.removeEventListener('cnvs-share-menu-visibility', onShareVisibility as EventListener);
+      window.removeEventListener('cnvs-collaborator-menu-visibility', onCollaboratorVisibility as EventListener);
+    };
   }, []);
 
   useEffect(() => {
@@ -174,7 +187,11 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   const panelClass = isMobile
     ? 'fixed bottom-[calc(1rem+88px)] right-3 z-[65] w-56 max-h-[56vh] overflow-auto no-scrollbar border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
     : 'fixed right-4 z-50 w-56 border border-border bg-card p-3 space-y-3 animate-fade-in';
-  const desktopTop = sharePanelBottom !== null ? Math.max(64, Math.round(sharePanelBottom + 8)) : 64;
+  const topOverlayBottom = Math.max(
+    headerOverlayBottoms.share ?? 64,
+    headerOverlayBottoms.collaborators ?? 64
+  );
+  const desktopTop = topOverlayBottom > 64 ? Math.round(topOverlayBottom + 8) : 64;
 
   const visibleColors = useMemo(
     () => COLORS.map((color) => (isDarkMode && color.toLowerCase() === '#000000' ? '#ffffff' : color)),

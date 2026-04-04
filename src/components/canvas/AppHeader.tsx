@@ -42,6 +42,7 @@ interface AppHeaderProps {
     activeTool: string | null;
     isVisible: boolean;
     color: string;
+    isSelf?: boolean;
   }[];
   collaborationConnected?: boolean;
   onToggleCollaboratorVisibility?: (userId: string) => void;
@@ -89,8 +90,6 @@ export function AppHeader({
   const [renamingCanvas, setRenamingCanvas] = useState(false);
   const [renamingPage, setRenamingPage] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
-  const [viewShareUrl, setViewShareUrl] = useState('');
-  const [editShareUrl, setEditShareUrl] = useState('');
   const isMobile = useIsMobile();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
@@ -99,6 +98,7 @@ export function AppHeader({
   const shareMenuContentRef = useRef<HTMLDivElement>(null);
   const collabButtonRef = useRef<HTMLButtonElement>(null);
   const collabPanelRef = useRef<HTMLDivElement>(null);
+  const collabMenuContentRef = useRef<HTMLDivElement>(null);
   const headerCanvasName = (currentCanvasLabel || '').trim() || 'Untitled Canvas';
   const headerPageName = (currentPageLabel || '').trim() || 'Page 1';
   const isGuestUser = !user;
@@ -197,8 +197,6 @@ export function AppHeader({
       const nextShareUrl = resolvedAccess === 'editor' ? nextEditShareUrl : nextViewShareUrl;
 
       setShareAccessLevel(resolvedAccess);
-      setViewShareUrl(nextViewShareUrl);
-      setEditShareUrl(nextEditShareUrl);
       setShareUrl(nextShareUrl);
       setIsPublished(true);
       return nextShareUrl;
@@ -228,8 +226,6 @@ export function AppHeader({
       }
 
       setIsPublished(false);
-      setViewShareUrl('');
-      setEditShareUrl('');
       setShareUrl('');
       toast.success('Unpublished');
       return true;
@@ -251,8 +247,6 @@ export function AppHeader({
 
     if (!data?.share_token) {
       setIsPublished(false);
-      setViewShareUrl('');
-      setEditShareUrl('');
       setShareUrl('');
       setShareAccessLevel('viewer');
       return;
@@ -263,8 +257,6 @@ export function AppHeader({
     const nextEditShareUrl = toPageApiUrl(toEditSharePagePath(context.routeOwner, (data as any).share_token, user.id));
     const nextShareUrl = resolvedAccess === 'editor' ? nextEditShareUrl : nextViewShareUrl;
     setShareAccessLevel(resolvedAccess);
-    setViewShareUrl(nextViewShareUrl);
-    setEditShareUrl(nextEditShareUrl);
     setIsPublished(true);
     setShareUrl(nextShareUrl);
   };
@@ -301,6 +293,19 @@ export function AppHeader({
     const rect = shareMenuContentRef.current?.getBoundingClientRect();
     window.dispatchEvent(
       new CustomEvent('cnvs-share-menu-visibility', {
+        detail: {
+          open,
+          bottom: rect ? rect.bottom : null,
+        },
+      })
+    );
+  }, []);
+
+  const emitCollaboratorMenuVisibility = useCallback((open: boolean) => {
+    if (typeof window === 'undefined') return;
+    const rect = collabMenuContentRef.current?.getBoundingClientRect();
+    window.dispatchEvent(
+      new CustomEvent('cnvs-collaborator-menu-visibility', {
         detail: {
           open,
           bottom: rect ? rect.bottom : null,
@@ -406,6 +411,26 @@ export function AppHeader({
     window.addEventListener('pointerdown', onPointerDown);
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [showCollaboratorMenu]);
+
+  useEffect(() => {
+    if (!showCollaboratorMenu) {
+      emitCollaboratorMenuVisibility(false);
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      emitCollaboratorMenuVisibility(true);
+    });
+
+    const onResize = () => emitCollaboratorMenuVisibility(true);
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', onResize);
+      emitCollaboratorMenuVisibility(false);
+    };
+  }, [emitCollaboratorMenuVisibility, showCollaboratorMenu]);
 
   useEffect(() => {
     const onOpenShortcuts = () => setShowShortcutsDialog(true);
@@ -579,7 +604,7 @@ export function AppHeader({
               )}
             </button>
             {showCollaboratorMenu && (
-              <div className="absolute right-0 top-10 z-50 w-72 border border-border bg-card p-2 shadow-lg space-y-2">
+              <div ref={collabMenuContentRef} className="absolute right-0 top-10 z-50 w-72 border border-border bg-card p-2 shadow-lg space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-mono text-foreground">Active editors</span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
@@ -589,7 +614,7 @@ export function AppHeader({
                 </div>
                 {collaborators.length === 0 ? (
                   <div className="text-[10px] font-mono text-muted-foreground border border-border p-2">
-                    No one else is editing this canvas right now.
+                    No active editors right now.
                   </div>
                 ) : (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto no-scrollbar">
@@ -607,7 +632,7 @@ export function AppHeader({
                             </div>
                           )}
                           <div className="min-w-0">
-                            <div className="text-[11px] font-mono text-foreground truncate">{collab.displayName}</div>
+                            <div className="text-[11px] font-mono text-foreground truncate">{collab.displayName}{collab.isSelf ? ' (You)' : ''}</div>
                             <div className="text-[10px] font-mono text-muted-foreground truncate">
                               {collab.activeTool ? `Tool: ${collab.activeTool}` : 'Browsing'}
                             </div>
@@ -691,16 +716,6 @@ export function AppHeader({
                     Copy link
                   </button>
                 </div>
-                {isPublished && (
-                  <div className="space-y-1">
-                    <div className="text-[10px] font-mono text-muted-foreground break-all border border-border p-2">
-                      <span className="text-foreground">View URL:</span> {viewShareUrl}
-                    </div>
-                    <div className="text-[10px] font-mono text-muted-foreground break-all border border-border p-2">
-                      <span className="text-foreground">Edit URL:</span> {editShareUrl}
-                    </div>
-                  </div>
-                )}
                 {shareUrl && (
                   <div className="border border-border p-2 text-[10px] font-mono text-muted-foreground break-all">{shareUrl}</div>
                 )}
