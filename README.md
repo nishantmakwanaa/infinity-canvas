@@ -248,6 +248,13 @@ npm run build
 
 3. Deploy `dist/` to your static host (Vercel, Netlify, Cloudflare Pages, etc.)
 
+Important for tokenized routes and shared links:
+
+- This project must use SPA fallback rewrites so deep links (for example `/:pageToken?...`) serve `index.html`.
+- Included in repo:
+	- `vercel.json` rewrite config for Vercel
+	- `public/_redirects` for Netlify/Cloudflare-style static hosts
+
 ## License
 
 Private/internal project unless otherwise specified by repository owner.
