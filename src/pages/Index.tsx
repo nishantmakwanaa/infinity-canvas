@@ -27,7 +27,7 @@ type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found' | 'a
 
 type PendingSidebarAction =
   | { type: 'select'; canvasId: string }
-  | { type: 'create' }
+  | { type: 'create'; name?: string }
   | { type: 'delete'; ids: string[] };
 
 interface CanvasSnapshot {
@@ -101,6 +101,8 @@ const Index = () => {
   const [mobileToolSettingsOpen, setMobileToolSettingsOpen] = useState(false);
   const pendingSidebarActionRef = useRef<PendingSidebarAction | null>(null);
   const routeSelectFailedCanvasIdRef = useRef<string | null>(null);
+  const routeSelectFailedAtRef = useRef(0);
+  const shareEditAuthRedirectStartedRef = useRef(false);
 
   const isLoggedIn = Boolean(session?.user?.id);
   const isShareEditRoute = parsedApiRequest?.kind === 'share-edit';
@@ -114,6 +116,9 @@ const Index = () => {
   const effectiveCurrentCanvasId = rawUserToken ? (routeCanvasId || currentCanvasId) : currentCanvasId;
   const activeCanvasIdForCollab = rawUserToken ? (routeCanvasId || currentCanvasId) : (currentCanvasId || routeCanvasId);
   const activeAccessCanvasId = effectiveCurrentCanvasId || activeCanvasIdForCollab;
+  const isCurrentCanvasOwned = Boolean(
+    activeAccessCanvasId && canvases.some((canvas) => canvas.id === activeAccessCanvasId)
+  );
   const currentOwnedShareAccess = activeAccessCanvasId ? shareAccessByCanvasId[activeAccessCanvasId] : undefined;
   const currentJoinedShareAccess = activeAccessCanvasId ? joinedCanvasAccessByCanvasId[activeAccessCanvasId] : undefined;
   const allowCollaboratorsForCurrentCanvas = Boolean(
@@ -173,7 +178,7 @@ const Index = () => {
   const editorSlotActiveCount = useSocketTransport ? socketEditorSlotActiveCount : realtimeEditorSlotActiveCount;
   const editorSlotLimitCount = useSocketTransport ? socketEditorSlotLimitCount : realtimeEditorSlotLimitCount;
 
-  const collabEditLocked = allowCollaboratorsForCurrentCanvas && !editorSlotGranted;
+  const collabEditLocked = allowCollaboratorsForCurrentCanvas && !editorSlotGranted && !isCurrentCanvasOwned;
   const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked;
   const canMutateCanvas = isEditorMode && !collabEditLocked;
 
@@ -315,7 +320,17 @@ const Index = () => {
       .filter((canvas) => canvas.canvasSlug === currentParsedName.canvasSlug)
       .map((canvas) => canvas.pageSlug);
     const nextPage = nextPageSlug(pageSlugs);
-    void createCanvas(`${currentParsedName.canvasSlug}/${nextPage}`);
+    const nextName = `${currentParsedName.canvasSlug}/${nextPage}`;
+    if (rawUserToken) {
+      pendingSidebarActionRef.current = { type: 'create', name: nextName };
+      setRouteMode('home');
+      setRouteCanvasId(null);
+      setRouteCanvasName(null);
+      setRouteError('');
+      navigate('/', { replace: true });
+      return;
+    }
+    void createCanvas(nextName);
   };
 
   const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
@@ -371,7 +386,7 @@ const Index = () => {
     }
 
     if (pendingAction.type === 'create') {
-      void createCanvas();
+      void createCanvas(pendingAction.name);
       return;
     }
 
@@ -393,6 +408,16 @@ const Index = () => {
       setShowGuestAuthDialog(false);
     }
   }, [isLoggedIn, showGuestAuthDialog]);
+
+  useEffect(() => {
+    if (!showShareEditAuthGate) {
+      shareEditAuthRedirectStartedRef.current = false;
+      return;
+    }
+    if (shareEditAuthRedirectStartedRef.current) return;
+    shareEditAuthRedirectStartedRef.current = true;
+    void signInWithGoogle({ intent: 'return-current' });
+  }, [showShareEditAuthGate, signInWithGoogle]);
 
   useEffect(() => {
     if (!collabEditLocked) {
@@ -458,7 +483,15 @@ const Index = () => {
       const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
       const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
       if (isShareRoute && session?.user?.id && row?.canvas_id) {
-        markJoinedCanvasAccess(row.canvas_id, isShareEditLink ? 'editor' : 'viewer');
+        const requestedAccess = (shareAccess === 'editor' || isShareEditLink) ? 'editor' : 'viewer';
+        markJoinedCanvasAccess(row.canvas_id, requestedAccess);
+        await (supabase as any)
+          .rpc('sync_canvas_permission_from_share', {
+            p_canvas_id: row.canvas_id,
+            p_access_level: requestedAccess,
+          })
+          .catch(() => null);
+        if (cancelled) return;
       }
       const canEdit = isShareRoute
         ? Boolean(isShareEditLink && session?.user?.id && (Boolean(row.can_edit) || shareAccess === 'editor'))
@@ -495,20 +528,33 @@ const Index = () => {
 
   useEffect(() => {
     if (routeMode !== 'editable' || !routeCanvasId || !syncEnabled) return;
-    if (routeSelectFailedCanvasIdRef.current === routeCanvasId) return;
+    const now = Date.now();
+    if (
+      routeSelectFailedCanvasIdRef.current === routeCanvasId
+      && now - routeSelectFailedAtRef.current < 3000
+    ) {
+      return;
+    }
     if (currentCanvasId === routeCanvasId) return;
     void selectCanvas(routeCanvasId).then((loaded) => {
       if (loaded) {
         routeSelectFailedCanvasIdRef.current = null;
+        routeSelectFailedAtRef.current = 0;
         return;
       }
       routeSelectFailedCanvasIdRef.current = routeCanvasId;
+      routeSelectFailedAtRef.current = Date.now();
       if (rawUserToken) {
-        setRouteMode('readonly');
-        setRouteError('Canvas is not available for edit in this session.');
+        if (parsedApiRequest?.kind === 'share') {
+          setRouteMode('readonly');
+          setRouteError('Canvas is view-only in this session.');
+          return;
+        }
+        setRouteMode('editable');
+        setRouteError('Canvas load retrying. If this persists, refresh once.');
       }
     });
-  }, [currentCanvasId, rawUserToken, routeMode, routeCanvasId, selectCanvas, syncEnabled]);
+  }, [currentCanvasId, parsedApiRequest?.kind, rawUserToken, routeMode, routeCanvasId, selectCanvas, syncEnabled]);
 
   useEffect(() => {
     if (!isMobile) {
@@ -876,7 +922,9 @@ const Index = () => {
         <AuthGateDialog
           mode={rawUserToken ? 'share' : 'home'}
           loading={loading}
-          onSignIn={signInWithGoogle}
+          onSignIn={() => {
+            void signInWithGoogle({ intent: 'dashboard' });
+          }}
           presentation="overlay"
           dismissOnBackdrop={true}
           onClose={() => setShowGuestAuthDialog(false)}
@@ -887,7 +935,9 @@ const Index = () => {
         <AuthGateDialog
           mode="share-edit"
           loading={loading}
-          onSignIn={signInWithGoogle}
+          onSignIn={() => {
+            void signInWithGoogle({ intent: 'return-current' });
+          }}
           presentation="overlay"
           dismissOnBackdrop={false}
         />

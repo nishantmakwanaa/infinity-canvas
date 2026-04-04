@@ -237,8 +237,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     if (blockedWriteCanvasIdsRef.current.has(canvasId)) return false;
     if (canvases.some((canvas) => canvas.id === canvasId)) return true;
     if (shareAccessByCanvasId[canvasId] === 'editor') return true;
+    if (joinedCanvasAccessByCanvasId[canvasId] === 'editor') return true;
     return false;
-  }, [canvases, shareAccessByCanvasId]);
+  }, [canvases, joinedCanvasAccessByCanvasId, shareAccessByCanvasId]);
 
   const insertCanvasWithRetry = useCallback(async (
     userId: string,
@@ -319,12 +320,36 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   }, [warnPermissionIssue]);
 
   const refreshSharedCanvases = useCallback(async (userId: string) => {
-    const joinedAccess = readJoinedCanvasAccess(userId);
-    const joinedIds = Object.keys(joinedAccess);
-    setJoinedCanvasAccessByCanvasId(joinedAccess);
+    const localJoinedAccess = readJoinedCanvasAccess(userId);
+    const mergedJoinedAccess: JoinedCanvasAccessMap = { ...localJoinedAccess };
+
+    const permissionsResult = await (supabase as any)
+      .from('canvas_permissions')
+      .select('canvas_id,role')
+      .eq('user_id', userId)
+      .in('role', ['viewer', 'editor']);
+
+    if (permissionsResult?.error) {
+      const status = Number((permissionsResult.error as any)?.status || 0);
+      if (status === 401 || status === 403) {
+        warnPermissionIssue();
+      }
+    } else {
+      ((permissionsResult?.data || []) as any[]).forEach((row) => {
+        const canvasId = String(row?.canvas_id || '').trim();
+        if (!canvasId) return;
+        const role = String(row?.role || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
+        const existing = mergedJoinedAccess[canvasId];
+        mergedJoinedAccess[canvasId] = (existing === 'editor' || role === 'editor') ? 'editor' : 'viewer';
+      });
+    }
+
+    const joinedIds = Object.keys(mergedJoinedAccess);
+    setJoinedCanvasAccessByCanvasId(mergedJoinedAccess);
 
     if (!joinedIds.length) {
       setSharedCanvases([]);
+      writeJoinedCanvasAccess(userId, {});
       return [] as CanvasMeta[];
     }
 
@@ -351,7 +376,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     const validIds = new Set(mapped.map((row) => row.id));
     const nextJoined: JoinedCanvasAccessMap = {};
-    Object.entries(joinedAccess).forEach(([canvasId, access]) => {
+    Object.entries(mergedJoinedAccess).forEach(([canvasId, access]) => {
       if (!validIds.has(canvasId)) return;
       nextJoined[canvasId] = access;
     });
@@ -412,14 +437,22 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const markJoinedCanvasAccess = useCallback((canvasId: string, access: CanvasAccessLevel) => {
     const userId = session?.user?.id;
     if (!userId || !canvasId) return;
+    const requestedAccess: CanvasAccessLevel = access === 'editor' ? 'editor' : 'viewer';
 
     setJoinedCanvasAccessByCanvasId((prev) => {
       const existing = prev[canvasId];
-      const nextAccess: CanvasAccessLevel = (existing === 'editor' || access === 'editor') ? 'editor' : 'viewer';
+      const nextAccess: CanvasAccessLevel = (existing === 'editor' || requestedAccess === 'editor') ? 'editor' : 'viewer';
       const next = { ...prev, [canvasId]: nextAccess };
       writeJoinedCanvasAccess(userId, next);
       return next;
     });
+
+    void (supabase as any)
+      .rpc('sync_canvas_permission_from_share', {
+        p_canvas_id: canvasId,
+        p_access_level: requestedAccess,
+      })
+      .catch(() => undefined);
   }, [session?.user?.id]);
 
   const removeJoinedCanvasAccess = useCallback((userId: string, canvasId: string) => {
@@ -433,6 +466,33 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     });
     setSharedCanvases((prev) => prev.filter((canvas) => canvas.id !== canvasId));
   }, []);
+
+  const readServerLastOpenedCanvasId = useCallback(async () => {
+    const rpc = await (supabase as any).rpc('get_last_opened_canvas_id');
+    if (rpc?.error) {
+      if (isPermissionDeniedError(rpc.error)) {
+        warnPermissionIssue();
+      }
+      if (isRpcMissingError(rpc.error)) {
+        return null;
+      }
+      return null;
+    }
+
+    const row = Array.isArray(rpc?.data) ? rpc.data[0] : rpc?.data;
+    const id = String(row?.canvas_id || '').trim();
+    return id || null;
+  }, [warnPermissionIssue]);
+
+  const syncServerLastOpenedCanvasId = useCallback(async (canvasId: string) => {
+    if (!canvasId) return;
+    const rpc = await (supabase as any).rpc('set_last_opened_canvas_id', {
+      p_canvas_id: canvasId,
+    });
+    if (rpc?.error && isPermissionDeniedError(rpc.error)) {
+      warnPermissionIssue();
+    }
+  }, [warnPermissionIssue]);
 
   const loadCanvasById = useCallback(async (canvasId: string, persistForUserId?: string): Promise<boolean> => {
     const seq = ++loadSeqRef.current;
@@ -498,6 +558,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       setCurrentCanvasName((row as any).name || null);
       if (persistForUserId) {
         writeLastOpenedCanvasId(persistForUserId, row.id);
+        void syncServerLastOpenedCanvasId(row.id);
       }
       const store = useCanvasStore.getState();
       const drawings = (row as any).drawings as DrawingElement[] || [];
@@ -514,7 +575,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         setIsCanvasLoading(false);
       }
     }
-  }, [refreshAllCanvasCollections, removeJoinedCanvasAccess, warnPermissionIssue]);
+  }, [refreshAllCanvasCollections, removeJoinedCanvasAccess, syncServerLastOpenedCanvasId, warnPermissionIssue]);
 
   const loadCanvas = useCallback(async (userId: string) => {
     const autoLoadSeq = ++loadSeqRef.current;
@@ -534,12 +595,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return;
     }
 
-    const savedId = readLastOpenedCanvasId(userId);
+    const serverSavedId = await readServerLastOpenedCanvasId();
+    const savedId = serverSavedId || readLastOpenedCanvasId(userId);
     const selectedDuringStartup = currentCanvasIdRef.current
       ? list.find((canvas) => canvas.id === currentCanvasIdRef.current)
       : null;
     const preferred = savedId ? list.find((canvas) => canvas.id === savedId) : null;
-    const first = selectedDuringStartup || list[0] || preferred;
+    const first = selectedDuringStartup || preferred || list[0];
     const guestSnapshot = readGuestSnapshot();
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
 
@@ -620,7 +682,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
-  }, [loadCanvasById, refreshAllCanvasCollections]);
+  }, [loadCanvasById, readServerLastOpenedCanvasId, refreshAllCanvasCollections]);
 
   const createCanvas = useCallback(async (name?: string) => {
     if (!enabled || !session?.user?.id) return;
@@ -680,13 +742,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string, pageName?: string) => {
     if (!enabled) return;
     const requestedSeq = loadSeqRef.current;
-    let { data, error } = await supabase.rpc('resolve_user_canvas', {
+    let { data, error } = await (supabase as any).rpc('resolve_user_canvas', {
       p_owner_username: ownerUsername,
       p_canvas_name: name,
       p_page_name: pageName || null,
     });
     if (error) {
-      const fallback = await supabase.rpc('resolve_user_canvas', {
+      const fallback = await (supabase as any).rpc('resolve_user_canvas', {
         p_owner_username: ownerUsername,
         p_canvas_name: name,
       });
@@ -695,7 +757,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
     if (requestedSeq !== loadSeqRef.current) return;
     if (!error && data) {
-      await loadCanvasById(data as string, session?.user?.id);
+      await loadCanvasById(String(data), session?.user?.id);
     }
   }, [enabled, loadCanvasById, session?.user?.id]);
 

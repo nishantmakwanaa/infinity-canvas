@@ -236,28 +236,27 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
   }, []);
 
   const queueViewportTarget = useCallback((pan: { x: number; y: number }, zoom: number) => {
-    viewportTargetRef.current = { pan, zoom };
-    if (viewportAnimationRef.current) return;
-    viewportAnimationRef.current = window.requestAnimationFrame(animateViewportToTarget);
+    void pan;
+    void zoom;
   }, [animateViewportToTarget]);
 
   const applyStoredSnapshotForUser = useCallback((userId: string) => {
-    stopViewportAnimation();
     const snapshot = userId === identity?.id ? localSnapshotRef.current : latestRemoteSnapshotRef.current[userId];
     if (!snapshot) return;
+    const localViewport = useCanvasStore.getState();
 
     applyRemoteRef.current = true;
     useCanvasStore.getState().applyRemoteSnapshot(
       snapshot.blocks,
-      snapshot.pan,
-      typeof snapshot.zoom === 'number' ? snapshot.zoom : 1,
+      localViewport.pan,
+      localViewport.zoom,
       snapshot.drawings
     );
     lastAppliedSnapshotUserIdRef.current = userId;
     window.setTimeout(() => {
       applyRemoteRef.current = false;
     }, 0);
-  }, [identity?.id, stopViewportAnimation]);
+  }, [identity?.id]);
 
   const applyLatestVisibleOtherSnapshot = useCallback((hiddenUserId?: string) => {
     const candidates = Object.entries(latestRemoteSnapshotRef.current)
@@ -283,8 +282,6 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
       active_tool: state.activeTool,
       cursor_x: cursorRef.current.x,
       cursor_y: cursorRef.current.y,
-      pan: state.pan,
-      zoom: state.zoom,
       last_seen_at: Date.now(),
       client_id: clientIdRef.current,
     });
@@ -307,19 +304,8 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
   }, [canvasId, identity]);
 
   const broadcastViewport = useCallback((pan: { x: number; y: number }, zoom: number) => {
-    const socket = socketRef.current;
-    if (!socket || !socket.connected || !identity || !canvasId) return;
-    if (!slotGrantedRef.current) return;
-    if (visibilityRef.current[identity.id] === false) return;
-
-    socket.emit('collab:viewport_move', {
-      canvas_id: canvasId,
-      user_id: identity.id,
-      client_id: clientIdRef.current,
-      pan,
-      zoom,
-      sent_at: Date.now(),
-    });
+    void pan;
+    void zoom;
   }, [canvasId, identity]);
 
   const broadcastSnapshot = useCallback((
@@ -561,17 +547,7 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
     };
 
     const handleViewportMove = (payload: any) => {
-      const senderId = String(payload?.user_id || '');
-      const senderClientId = String(payload?.client_id || '');
-      if (!senderId || senderId === identity.id || senderClientId === clientIdRef.current) return;
-      if (visibilityRef.current[senderId] === false) return;
-
-      const pan = payload?.pan;
-      const zoom = payload?.zoom;
-      if (!pan || typeof pan.x !== 'number' || typeof pan.y !== 'number') return;
-      if (typeof zoom !== 'number') return;
-
-      queueViewportTarget({ x: pan.x, y: pan.y }, zoom);
+      void payload;
     };
 
     const handleSnapshotRequest = (payload: any) => {
@@ -677,15 +653,6 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
       const panChanged = state.pan !== prevState.pan;
       const zoomChanged = state.zoom !== prevState.zoom;
 
-      if (!blocksChanged && !drawingsChanged && (panChanged || zoomChanged)) {
-        if (viewportSendTimeoutRef.current) window.clearTimeout(viewportSendTimeoutRef.current);
-        viewportSendTimeoutRef.current = window.setTimeout(() => {
-          viewportSendTimeoutRef.current = null;
-          const nextViewport = useCanvasStore.getState();
-          broadcastViewport(nextViewport.pan, nextViewport.zoom);
-        }, 34);
-      }
-
       sendTimeoutRef.current = window.setTimeout(() => {
         const next = useCanvasStore.getState();
         localSnapshotRef.current = {
@@ -759,12 +726,10 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
     applyStoredSnapshotForUser,
     broadcastCursor,
     broadcastSnapshot,
-    broadcastViewport,
     canvasId,
     claimEditorSlot,
     enabled,
     identity,
-    queueViewportTarget,
     releaseEditorSlot,
     removeCursorUser,
     sendPresence,

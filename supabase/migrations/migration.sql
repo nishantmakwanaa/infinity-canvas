@@ -45,6 +45,38 @@ create table if not exists public.canvas_editor_sessions (
   expires_at    timestamptz not null default (now() + interval '90 seconds')
 );
 
+-- Per-user permission records for each canvas.
+create table if not exists public.canvas_permissions (
+  id          uuid        primary key default gen_random_uuid(),
+  canvas_id   uuid        not null references public.canvases(id) on delete cascade,
+  user_id     uuid        not null references auth.users(id) on delete cascade,
+  role        text        not null default 'viewer',
+  granted_by  uuid        references auth.users(id) on delete set null,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (canvas_id, user_id)
+);
+
+create table if not exists public.user_canvas_state (
+  user_id               uuid        primary key references auth.users(id) on delete cascade,
+  last_opened_canvas_id uuid        references public.canvases(id) on delete set null,
+  updated_at            timestamptz not null default now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'canvas_permissions_role_check'
+      and conrelid = 'public.canvas_permissions'::regclass
+  ) then
+    alter table public.canvas_permissions
+      add constraint canvas_permissions_role_check
+      check (role in ('owner', 'editor', 'viewer'));
+  end if;
+end $$;
+
 alter table public.shared_canvases
   add column if not exists page_name text;
 
@@ -145,6 +177,17 @@ create index if not exists canvas_editor_sessions_canvas_expires_idx
   on public.canvas_editor_sessions(canvas_id, expires_at desc);
 create index if not exists canvas_editor_sessions_expires_idx
   on public.canvas_editor_sessions(expires_at);
+
+-- canvas_permissions
+create unique index if not exists canvas_permissions_canvas_user_key
+  on public.canvas_permissions(canvas_id, user_id);
+create index if not exists canvas_permissions_user_role_idx
+  on public.canvas_permissions(user_id, role, updated_at desc);
+create index if not exists canvas_permissions_canvas_role_idx
+  on public.canvas_permissions(canvas_id, role);
+
+create index if not exists user_canvas_state_last_opened_idx
+  on public.user_canvas_state(last_opened_canvas_id, updated_at desc);
 
 do $$
 begin
@@ -250,12 +293,53 @@ on public.canvases
 for each row
 execute function public.propagate_canvas_name_to_shares();
 
+-- 4. Keep owner permission rows aligned with canvas ownership.
+create or replace function public.sync_canvas_owner_permission()
+returns trigger
+language plpgsql
+as $$
+begin
+  delete from public.canvas_permissions cp
+  where cp.canvas_id = new.id
+    and cp.role = 'owner'
+    and cp.user_id <> new.user_id;
+
+  insert into public.canvas_permissions (canvas_id, user_id, role, granted_by)
+  values (new.id, new.user_id, 'owner', new.user_id)
+  on conflict (canvas_id, user_id)
+  do update
+    set role = 'owner',
+        granted_by = excluded.granted_by,
+        updated_at = now();
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_canvases_sync_owner_permission on public.canvases;
+create trigger trg_canvases_sync_owner_permission
+after insert or update of user_id
+on public.canvases
+for each row
+execute function public.sync_canvas_owner_permission();
+
+insert into public.canvas_permissions (canvas_id, user_id, role, granted_by)
+select c.id, c.user_id, 'owner', c.user_id
+from public.canvases c
+on conflict (canvas_id, user_id)
+do update
+  set role = 'owner',
+      granted_by = excluded.granted_by,
+      updated_at = now();
+
 -- -----------------------------------------------------------------------------
 -- Row-Level Security
 -- -----------------------------------------------------------------------------
 
 alter table public.canvases       enable row level security;
 alter table public.shared_canvases enable row level security;
+alter table public.canvas_permissions enable row level security;
+alter table public.user_canvas_state enable row level security;
 
 -- canvases policies
 drop policy if exists "canvases_select_own_or_shared" on public.canvases;
@@ -264,9 +348,10 @@ on public.canvases for select
 using (
   auth.uid() = user_id
   or exists (
-    select 1 from public.shared_canvases sc
-    where sc.canvas_id = canvases.id
-      and auth.uid() is not null
+    select 1
+    from public.canvas_permissions cp
+    where cp.canvas_id = canvases.id
+      and cp.user_id = auth.uid()
   )
 );
 
@@ -286,9 +371,10 @@ using (
       auth.uid() is not null
       and exists (
         select 1
-        from public.shared_canvases sc
-        where sc.canvas_id = canvases.id
-          and sc.access_level = 'editor'
+        from public.canvas_permissions cp
+        where cp.canvas_id = canvases.id
+          and cp.user_id = auth.uid()
+          and cp.role in ('owner', 'editor')
       )
     )
   )
@@ -297,9 +383,9 @@ using (
     or
     not exists (
       select 1
-      from public.shared_canvases sc_limit
-      where sc_limit.canvas_id = canvases.id
-        and sc_limit.access_level = 'editor'
+      from public.canvas_permissions cp_limit
+      where cp_limit.canvas_id = canvases.id
+        and cp_limit.role = 'editor'
     )
     or exists (
       select 1
@@ -317,9 +403,10 @@ with check (
       auth.uid() is not null
       and exists (
         select 1
-        from public.shared_canvases sc
-        where sc.canvas_id = canvases.id
-          and sc.access_level = 'editor'
+        from public.canvas_permissions cp
+        where cp.canvas_id = canvases.id
+          and cp.user_id = auth.uid()
+          and cp.role in ('owner', 'editor')
       )
     )
   )
@@ -328,9 +415,9 @@ with check (
     or
     not exists (
       select 1
-      from public.shared_canvases sc_limit
-      where sc_limit.canvas_id = canvases.id
-        and sc_limit.access_level = 'editor'
+      from public.canvas_permissions cp_limit
+      where cp_limit.canvas_id = canvases.id
+        and cp_limit.role = 'editor'
     )
     or exists (
       select 1
@@ -393,6 +480,85 @@ using (
   )
 );
 
+-- canvas_permissions policies
+drop policy if exists "canvas_permissions_select_self_or_owner" on public.canvas_permissions;
+create policy "canvas_permissions_select_self_or_owner"
+on public.canvas_permissions for select
+using (
+  auth.uid() = user_id
+  or exists (
+    select 1
+    from public.canvases c
+    where c.id = canvas_permissions.canvas_id
+      and c.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "canvas_permissions_insert_owner" on public.canvas_permissions;
+create policy "canvas_permissions_insert_owner"
+on public.canvas_permissions for insert
+with check (
+  exists (
+    select 1
+    from public.canvases c
+    where c.id = canvas_permissions.canvas_id
+      and c.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "canvas_permissions_update_owner" on public.canvas_permissions;
+create policy "canvas_permissions_update_owner"
+on public.canvas_permissions for update
+using (
+  exists (
+    select 1
+    from public.canvases c
+    where c.id = canvas_permissions.canvas_id
+      and c.user_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.canvases c
+    where c.id = canvas_permissions.canvas_id
+      and c.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "canvas_permissions_delete_owner" on public.canvas_permissions;
+create policy "canvas_permissions_delete_owner"
+on public.canvas_permissions for delete
+using (
+  exists (
+    select 1
+    from public.canvases c
+    where c.id = canvas_permissions.canvas_id
+      and c.user_id = auth.uid()
+  )
+);
+
+drop policy if exists "user_canvas_state_select_self" on public.user_canvas_state;
+create policy "user_canvas_state_select_self"
+on public.user_canvas_state for select
+using (auth.uid() = user_id);
+
+drop policy if exists "user_canvas_state_insert_self" on public.user_canvas_state;
+create policy "user_canvas_state_insert_self"
+on public.user_canvas_state for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "user_canvas_state_update_self" on public.user_canvas_state;
+create policy "user_canvas_state_update_self"
+on public.user_canvas_state for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "user_canvas_state_delete_self" on public.user_canvas_state;
+create policy "user_canvas_state_delete_self"
+on public.user_canvas_state for delete
+using (auth.uid() = user_id);
+
 -- -----------------------------------------------------------------------------
 -- Privileges (required by PostgREST in addition to RLS policies)
 -- -----------------------------------------------------------------------------
@@ -405,10 +571,18 @@ grant select, insert, update, delete on table public.canvases to authenticated;
 revoke select on table public.shared_canvases from anon;
 grant select, insert, update, delete on table public.shared_canvases to authenticated;
 
+revoke select on table public.canvas_permissions from anon;
+grant select, insert, update, delete on table public.canvas_permissions to authenticated;
+
+revoke select on table public.user_canvas_state from anon;
+grant select, insert, update, delete on table public.user_canvas_state to authenticated;
+
 revoke all on table public.canvas_editor_sessions from anon, authenticated;
 
 grant all on table public.canvases to service_role;
 grant all on table public.shared_canvases to service_role;
+grant all on table public.canvas_permissions to service_role;
+grant all on table public.user_canvas_state to service_role;
 grant all on table public.canvas_editor_sessions to service_role;
 
 -- -----------------------------------------------------------------------------
@@ -467,6 +641,182 @@ comment on function public.decode_hex_to_text(text)
 is 'Decodes compact URL-safe base64 tokens (preferred) and legacy dotted/dashed hex tokens into UTF-8 text.';
 
 
+drop function if exists public.sync_canvas_permission_from_share(uuid, text);
+create or replace function public.sync_canvas_permission_from_share(
+  p_canvas_id uuid,
+  p_access_level text default null
+)
+returns table (
+  canvas_id uuid,
+  user_id uuid,
+  role text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_owner_id uuid;
+  v_share_access text;
+  v_next_role text;
+begin
+  if p_canvas_id is null or v_user_id is null then
+    return;
+  end if;
+
+  select c.user_id, sc.access_level
+  into v_owner_id, v_share_access
+  from public.canvases c
+  left join public.shared_canvases sc on sc.canvas_id = c.id
+  where c.id = p_canvas_id
+  limit 1;
+
+  if v_owner_id is null then
+    return;
+  end if;
+
+  if v_user_id = v_owner_id then
+    v_next_role := 'owner';
+  elsif lower(coalesce(v_share_access, '')) = 'editor' then
+    if lower(coalesce(p_access_level, '')) = 'viewer' then
+      v_next_role := 'viewer';
+    else
+      v_next_role := 'editor';
+    end if;
+  elsif lower(coalesce(v_share_access, '')) = 'viewer' then
+    v_next_role := 'viewer';
+  else
+    return;
+  end if;
+
+  insert into public.canvas_permissions (canvas_id, user_id, role, granted_by)
+  values (p_canvas_id, v_user_id, v_next_role, v_owner_id)
+  on conflict (canvas_id, user_id)
+  do update
+    set role = case
+      when public.canvas_permissions.role = 'owner' then 'owner'
+      when excluded.role = 'editor' then 'editor'
+      when public.canvas_permissions.role = 'editor' then 'editor'
+      else excluded.role
+    end,
+    granted_by = excluded.granted_by,
+    updated_at = now();
+
+  return query
+    select cp.canvas_id, cp.user_id, cp.role
+    from public.canvas_permissions cp
+    where cp.canvas_id = p_canvas_id
+      and cp.user_id = v_user_id
+    limit 1;
+end;
+$$;
+
+revoke all on function public.sync_canvas_permission_from_share(uuid, text) from public;
+grant execute on function public.sync_canvas_permission_from_share(uuid, text) to authenticated;
+
+
+drop function if exists public.set_last_opened_canvas_id(uuid);
+create or replace function public.set_last_opened_canvas_id(
+  p_canvas_id uuid
+)
+returns table (
+  canvas_id uuid
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_has_access boolean := false;
+begin
+  if v_user_id is null then
+    return;
+  end if;
+
+  if p_canvas_id is null then
+    insert into public.user_canvas_state (user_id, last_opened_canvas_id, updated_at)
+    values (v_user_id, null, now())
+    on conflict (user_id)
+    do update
+      set last_opened_canvas_id = null,
+          updated_at = now();
+
+    return query select null::uuid;
+    return;
+  end if;
+
+  select exists (
+    select 1
+    from public.canvases c
+    left join public.canvas_permissions cp
+      on cp.canvas_id = c.id
+     and cp.user_id = v_user_id
+    where c.id = p_canvas_id
+      and (
+        c.user_id = v_user_id
+        or cp.role in ('owner', 'editor', 'viewer')
+      )
+  ) into v_has_access;
+
+  if not v_has_access then
+    return;
+  end if;
+
+  insert into public.user_canvas_state (user_id, last_opened_canvas_id, updated_at)
+  values (v_user_id, p_canvas_id, now())
+  on conflict (user_id)
+  do update
+    set last_opened_canvas_id = excluded.last_opened_canvas_id,
+        updated_at = now();
+
+  return query select p_canvas_id;
+end;
+$$;
+
+revoke all on function public.set_last_opened_canvas_id(uuid) from public;
+grant execute on function public.set_last_opened_canvas_id(uuid) to authenticated;
+
+
+drop function if exists public.get_last_opened_canvas_id();
+create or replace function public.get_last_opened_canvas_id()
+returns table (
+  canvas_id uuid
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+begin
+  if v_user_id is null then
+    return;
+  end if;
+
+  return query
+    select ucs.last_opened_canvas_id
+    from public.user_canvas_state ucs
+    left join public.canvases c on c.id = ucs.last_opened_canvas_id
+    left join public.canvas_permissions cp
+      on cp.canvas_id = ucs.last_opened_canvas_id
+     and cp.user_id = v_user_id
+    where ucs.user_id = v_user_id
+      and (
+        ucs.last_opened_canvas_id is null
+        or c.user_id = v_user_id
+        or cp.role in ('owner', 'editor', 'viewer')
+      )
+    limit 1;
+end;
+$$;
+
+revoke all on function public.get_last_opened_canvas_id() from public;
+grant execute on function public.get_last_opened_canvas_id() to authenticated;
+
+
 drop function if exists public.get_canvas_for_user(uuid);
 create or replace function public.get_canvas_for_user(
   p_canvas_id uuid
@@ -511,8 +861,10 @@ begin
         c.user_id = v_user_id
         or exists (
           select 1
-          from public.shared_canvases sc
-          where sc.canvas_id = c.id
+          from public.canvas_permissions cp
+          where cp.canvas_id = c.id
+            and cp.user_id = v_user_id
+            and cp.role in ('owner', 'editor', 'viewer')
         )
       )
     limit 1;
@@ -688,11 +1040,13 @@ begin
   select exists (
     select 1
     from public.canvases c
-    left join public.shared_canvases sc on sc.canvas_id = c.id
+    left join public.canvas_permissions cp
+      on cp.canvas_id = c.id
+     and cp.user_id = v_user_id
     where c.id = p_canvas_id
       and (
         c.user_id = v_user_id
-        or sc.access_level = 'editor'
+        or cp.role in ('owner', 'editor')
       )
   ) into v_has_access;
 
@@ -868,7 +1222,17 @@ begin
           (
             v_share_requires_editor
             and auth.uid() is not null
-            and (auth.uid() = c.user_id or sc.access_level = 'editor')
+            and (
+              auth.uid() = c.user_id
+              or sc.access_level = 'editor'
+              or exists (
+                select 1
+                from public.canvas_permissions cp
+                where cp.canvas_id = c.id
+                  and cp.user_id = auth.uid()
+                  and cp.role in ('owner', 'editor')
+              )
+            )
           ) as can_edit,
           c.blocks,
           c.drawings,

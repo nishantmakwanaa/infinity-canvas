@@ -10,6 +10,12 @@ interface AuthUser {
   avatarUrl: string | null;
 }
 
+type SignInIntent = 'dashboard' | 'return-current';
+
+interface SignInOptions {
+  intent?: SignInIntent;
+}
+
 function normalizeAvatarUrl(value: unknown) {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return null;
@@ -58,32 +64,58 @@ export function useAuth() {
   }, []);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ? extractUser(session.user) : null);
-      setLoading(false);
+    let active = true;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return;
+
+      if (nextSession?.user) {
+        setSession(nextSession);
+        setUser(extractUser(nextSession.user));
+        setLoading(false);
+        return;
+      }
+
+      // Clear immediately only on explicit sign-out.
+      if (event === 'SIGNED_OUT') {
+        setSession(nextSession);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      // Recover from transient null events by re-reading the persisted session.
+      void supabase.auth.getSession().then(({ data }) => {
+        if (!active) return;
+        const recovered = data?.session ?? null;
+        setSession(recovered);
+        setUser(recovered?.user ? extractUser(recovered.user) : null);
+        setLoading(false);
+      });
     });
 
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!active) return;
       setSession(session);
       setUser(session?.user ? extractUser(session.user) : null);
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, [extractUser]);
 
-  const signInWithGoogle = async () => {
+  const signInWithGoogle = async (options?: SignInOptions) => {
+    const intent: SignInIntent = options?.intent || 'dashboard';
     const configuredRedirect = import.meta.env.VITE_AUTH_REDIRECT_TO?.trim();
     const currentUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`;
-    let redirectTo = configuredRedirect && configuredRedirect.length > 0
+    const dashboardUrl = configuredRedirect && configuredRedirect.length > 0
       ? configuredRedirect
-      : currentUrl;
+      : `${window.location.origin}/`;
 
-    // If user is on a deep-link share page, always return to that exact URL after auth.
-    if (window.location.pathname !== '/' || window.location.search) {
-      redirectTo = currentUrl;
-    }
+    let redirectTo = intent === 'return-current' ? currentUrl : dashboardUrl;
 
     // Enforce clean path-based routing (no hash-based redirects).
     redirectTo = redirectTo.replace('/#/', '/');

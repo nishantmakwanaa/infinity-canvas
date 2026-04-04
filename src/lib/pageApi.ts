@@ -50,8 +50,12 @@ function stripPageSuffix(value: string) {
   return value.replace(/\.cnvs$/i, '').replace(/\.page$/i, '');
 }
 
-function buildOwnerIdentity(ownerUsername: string, _ownerUserId?: string | null) {
+function buildOwnerIdentity(ownerUsername: string, ownerUserId?: string | null) {
   const username = ownerUsername.trim().toLowerCase();
+  const userId = String(ownerUserId || '').trim().toLowerCase();
+  if (userId) {
+    return `${username}|${userId}`;
+  }
   return username;
 }
 
