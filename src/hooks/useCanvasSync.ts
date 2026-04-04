@@ -205,6 +205,19 @@ function isRpcMissingError(error: any) {
   return code === '42883' || message.includes('function') && message.includes('does not exist');
 }
 
+/** PostgREST: table/RPC not in API schema (migration not applied on this Supabase project). */
+function isPostgrestResourceMissingError(error: any) {
+  const status = Number(error?.status || 0);
+  if (status !== 404) return false;
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  if (code === 'PGRST202' || code === 'PGRST205') return true;
+  if (message.includes('schema cache')) return true;
+  if (message.includes('could not find the table')) return true;
+  if (message.includes('could not find the function')) return true;
+  return true;
+}
+
 export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOptions) {
   const enabled = options?.enabled ?? true;
   const canvasIdRef = useRef<string | null>(null);
@@ -215,6 +228,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const pendingSyncCacheRef = useRef<Record<string, PendingCanvasSyncSnapshot>>({});
   const blockedWriteCanvasIdsRef = useRef<Set<string>>(new Set());
   const permissionWarningShownRef = useRef(false);
+  const schemaMissingWarningShownRef = useRef(false);
   const isFlushingRemoteRef = useRef(false);
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
@@ -230,6 +244,15 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     if (permissionWarningShownRef.current) return;
     permissionWarningShownRef.current = true;
     toast.error('Supabase permission error (403). Apply latest DB migrations and sign in again.');
+  }, []);
+
+  const warnSchemaNotDeployed = useCallback(() => {
+    if (schemaMissingWarningShownRef.current) return;
+    schemaMissingWarningShownRef.current = true;
+    toast.error(
+      'Supabase returned 404: tables/RPCs are missing on this project. Run supabase/migrations/20260404100000_cnvs_baseline.sql in the Dashboard SQL Editor, or run `supabase db push` after linking this project.',
+      { duration: 12_000 }
+    );
   }, []);
 
   const canWriteCanvas = useCallback((canvasId: string) => {
@@ -253,7 +276,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }>,
     mutateNameOnConflict = true
   ) => {
-    const rpc = await (supabase as any).rpc('create_canvas_with_unique_name', {
+    const rpc = await supabase.rpc('create_canvas_with_unique_name', {
       p_name: baseName,
       p_blocks: payload?.blocks || [],
       p_drawings: payload?.drawings || [],
@@ -268,6 +291,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     if (isPermissionDeniedError(rpc?.error)) {
       warnPermissionIssue();
+      return null;
+    }
+    if (isPostgrestResourceMissingError(rpc?.error)) {
+      warnSchemaNotDeployed();
       return null;
     }
 
@@ -294,98 +321,142 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       if (status === 401 || status === 403 || String((error as any)?.code || '') === '42501') {
         warnPermissionIssue();
       }
+      if (isPostgrestResourceMissingError(error)) {
+        warnSchemaNotDeployed();
+        return null;
+      }
       if (!mutateNameOnConflict || !isCanvasNameConflictError(error)) {
         return null;
       }
     }
     return null;
-  }, [warnPermissionIssue]);
+  }, [warnPermissionIssue, warnSchemaNotDeployed]);
 
   const refreshCanvases = useCallback(async (userId: string) => {
-    const { data, error, status } = await supabase
+    const rpc = await supabase.rpc('list_owned_canvases');
+    if (!rpc?.error && Array.isArray(rpc?.data)) {
+      const rows = (rpc.data || []) as CanvasMeta[];
+      setCanvases(rows);
+      return rows;
+    }
+    if (isPermissionDeniedError(rpc?.error)) {
+      warnPermissionIssue();
+    }
+    if (isPostgrestResourceMissingError(rpc?.error)) {
+      warnSchemaNotDeployed();
+    }
+
+    const { data, error } = await supabase
       .from('canvases')
       .select('id,name,updated_at')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false });
-    if (error) {
-      if (status === 401 || status === 403) {
-        // Keep prior local list and let auth/session recovery handle access restoration.
-        warnPermissionIssue();
-        return null;
-      }
-      return null;
+
+    if (!error && Array.isArray(data)) {
+      const rows = data as CanvasMeta[];
+      setCanvases(rows);
+      return rows;
     }
-    setCanvases((data || []) as CanvasMeta[]);
-    return (data || []) as CanvasMeta[];
-  }, [warnPermissionIssue]);
+    if (isPermissionDeniedError(error)) {
+      warnPermissionIssue();
+    }
+    if (isPostgrestResourceMissingError(error)) {
+      warnSchemaNotDeployed();
+    }
+    return null;
+  }, [warnPermissionIssue, warnSchemaNotDeployed]);
 
   const refreshSharedCanvases = useCallback(async (userId: string) => {
     const localJoinedAccess = readJoinedCanvasAccess(userId);
-    const mergedJoinedAccess: JoinedCanvasAccessMap = { ...localJoinedAccess };
 
-    const permissionsResult = await (supabase as any)
-      .from('canvas_permissions')
-      .select('canvas_id,role')
-      .eq('user_id', userId)
-      .in('role', ['viewer', 'editor']);
+    type JoinedRow = { id: string; name: string; updated_at: string; role: string };
+    let rows: JoinedRow[] | null = null;
 
-    if (permissionsResult?.error) {
-      const status = Number((permissionsResult.error as any)?.status || 0);
-      if (status === 401 || status === 403) {
-        warnPermissionIssue();
-      }
+    const rpc = await supabase.rpc('list_joined_canvases');
+    if (!rpc?.error && Array.isArray(rpc?.data)) {
+      rows = (rpc.data || []) as JoinedRow[];
     } else {
-      ((permissionsResult?.data || []) as any[]).forEach((row) => {
-        const canvasId = String(row?.canvas_id || '').trim();
-        if (!canvasId) return;
-        const role = String(row?.role || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
-        const existing = mergedJoinedAccess[canvasId];
-        mergedJoinedAccess[canvasId] = (existing === 'editor' || role === 'editor') ? 'editor' : 'viewer';
-      });
-    }
-
-    const joinedIds = Object.keys(mergedJoinedAccess);
-    setJoinedCanvasAccessByCanvasId(mergedJoinedAccess);
-
-    if (!joinedIds.length) {
-      setSharedCanvases([]);
-      writeJoinedCanvasAccess(userId, {});
-      return [] as CanvasMeta[];
-    }
-
-    const { data, error, status } = await supabase
-      .from('canvases')
-      .select('id,name,updated_at,user_id')
-      .in('id', joinedIds)
-      .neq('user_id', userId)
-      .order('updated_at', { ascending: false });
-
-    if (error) {
-      if (status === 401 || status === 403) {
+      if (isPermissionDeniedError(rpc?.error)) {
         warnPermissionIssue();
-        return null;
       }
-      return null;
+      if (isPostgrestResourceMissingError(rpc?.error)) {
+        warnSchemaNotDeployed();
+      }
+
+      const { data: permRows, error: permErr } = await supabase
+        .from('canvas_permissions')
+        .select('canvas_id, role')
+        .eq('user_id', userId)
+        .in('role', ['viewer', 'editor']);
+
+      if (!permErr && Array.isArray(permRows) && permRows.length) {
+        const canvasIds = [
+          ...new Set(
+            permRows
+              .map((r: { canvas_id?: string }) => String(r?.canvas_id || '').trim())
+              .filter(Boolean)
+          ),
+        ];
+        const { data: canvasRows, error: canvasErr } = await supabase
+          .from('canvases')
+          .select('id,name,updated_at,user_id')
+          .in('id', canvasIds);
+
+        if (!canvasErr && Array.isArray(canvasRows)) {
+          const roleById = new Map<string, string>();
+          permRows.forEach((r: { canvas_id?: string; role?: string }) => {
+            const cid = String(r?.canvas_id || '').trim();
+            if (!cid) return;
+            const next = String(r?.role || '').toLowerCase();
+            if (next === 'editor' || !roleById.has(cid)) {
+              roleById.set(cid, next === 'editor' ? 'editor' : 'viewer');
+            }
+          });
+
+          rows = canvasRows
+            .filter((c) => c.user_id !== userId)
+            .map((c) => ({
+              id: c.id,
+              name: c.name,
+              updated_at: c.updated_at,
+              role: roleById.get(c.id) || 'viewer',
+            }));
+        } else if (isPermissionDeniedError(canvasErr)) {
+          warnPermissionIssue();
+        } else if (isPostgrestResourceMissingError(canvasErr)) {
+          warnSchemaNotDeployed();
+        }
+      } else if (isPermissionDeniedError(permErr)) {
+        warnPermissionIssue();
+      } else if (isPostgrestResourceMissingError(permErr)) {
+        warnSchemaNotDeployed();
+      }
+
+      if (rows === null) {
+        rows = [];
+      }
     }
 
-    const mapped = ((data || []) as any[]).map((row) => ({
+    const nextJoined: JoinedCanvasAccessMap = {};
+    rows.forEach((row) => {
+      const canvasId = String(row?.id || '').trim();
+      if (!canvasId) return;
+      const role = String(row?.role || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
+      const localRole = localJoinedAccess[canvasId];
+      nextJoined[canvasId] = (localRole === 'editor' || role === 'editor') ? 'editor' : 'viewer';
+    });
+
+    const mapped = rows.map((row) => ({
       id: row.id,
       name: row.name,
       updated_at: row.updated_at,
     })) as CanvasMeta[];
 
-    const validIds = new Set(mapped.map((row) => row.id));
-    const nextJoined: JoinedCanvasAccessMap = {};
-    Object.entries(mergedJoinedAccess).forEach(([canvasId, access]) => {
-      if (!validIds.has(canvasId)) return;
-      nextJoined[canvasId] = access;
-    });
-
     setJoinedCanvasAccessByCanvasId(nextJoined);
     writeJoinedCanvasAccess(userId, nextJoined);
     setSharedCanvases(mapped);
     return mapped;
-  }, [warnPermissionIssue]);
+  }, [warnPermissionIssue, warnSchemaNotDeployed]);
 
   const refreshShareAccessByCanvasIds = useCallback(async (canvasIds: string[]) => {
     if (!canvasIds.length) {
@@ -412,7 +483,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       if (!id) return;
       if (level === 'editor') {
         next[id] = 'editor';
-      } else if (level === 'viewer') {
+      } else if (level === 'viewer' && next[id] !== 'editor') {
         next[id] = 'viewer';
       }
     });
@@ -447,7 +518,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return next;
     });
 
-    void (supabase as any)
+    void supabase
       .rpc('sync_canvas_permission_from_share', {
         p_canvas_id: canvasId,
         p_access_level: requestedAccess,
@@ -468,7 +539,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   }, []);
 
   const readServerLastOpenedCanvasId = useCallback(async () => {
-    const rpc = await (supabase as any).rpc('get_last_opened_canvas_id');
+    const rpc = await supabase.rpc('get_last_opened_canvas_id');
     if (rpc?.error) {
       if (isPermissionDeniedError(rpc.error)) {
         warnPermissionIssue();
@@ -486,7 +557,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
   const syncServerLastOpenedCanvasId = useCallback(async (canvasId: string) => {
     if (!canvasId) return;
-    const rpc = await (supabase as any).rpc('set_last_opened_canvas_id', {
+    const rpc = await supabase.rpc('set_last_opened_canvas_id', {
       p_canvas_id: canvasId,
     });
     if (rpc?.error && isPermissionDeniedError(rpc.error)) {
@@ -500,7 +571,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     setIsCanvasLoading(true);
 
     try {
-      const rpc = await (supabase as any).rpc('get_canvas_for_user', {
+      const rpc = await supabase.rpc('get_canvas_for_user', {
         p_canvas_id: canvasId,
       });
 
@@ -742,13 +813,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string, pageName?: string) => {
     if (!enabled) return;
     const requestedSeq = loadSeqRef.current;
-    let { data, error } = await (supabase as any).rpc('resolve_user_canvas', {
+    let { data, error } = await supabase.rpc('resolve_user_canvas', {
       p_owner_username: ownerUsername,
       p_canvas_name: name,
       p_page_name: pageName || null,
     });
     if (error) {
-      const fallback = await (supabase as any).rpc('resolve_user_canvas', {
+      const fallback = await supabase.rpc('resolve_user_canvas', {
         p_owner_username: ownerUsername,
         p_canvas_name: name,
       });

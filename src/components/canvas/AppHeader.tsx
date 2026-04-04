@@ -20,6 +20,7 @@ interface AppHeaderProps {
   user: AuthUser | null;
   loading: boolean;
   onSignIn: () => void;
+  canShareCurrentCanvas?: boolean;
   readOnlyMode?: boolean;
   forceShowCollaboratorsButton?: boolean;
   currentCanvasId?: string | null;
@@ -58,6 +59,7 @@ export function AppHeader({
   user,
   loading,
   onSignIn,
+  canShareCurrentCanvas = true,
   readOnlyMode = false,
   forceShowCollaboratorsButton = false,
   currentCanvasId,
@@ -94,6 +96,7 @@ export function AppHeader({
   const [renamingCanvas, setRenamingCanvas] = useState(false);
   const [renamingPage, setRenamingPage] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
+  const [publishedCanvasId, setPublishedCanvasId] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
@@ -109,6 +112,18 @@ export function AppHeader({
   const shouldShowCollaborators = Boolean(
     user && onToggleCollaboratorVisibility && !readOnlyMode && forceShowCollaboratorsButton
   );
+
+  const buildShareUrl = (
+    routeOwner: string,
+    token: string,
+    access: 'viewer' | 'editor',
+    ownerUserId?: string
+  ) => {
+    const path = access === 'editor'
+      ? toEditSharePagePath(routeOwner, token, ownerUserId)
+      : toSharePagePath(routeOwner, token, ownerUserId);
+    return toPageApiUrl(path);
+  };
 
   const resolveShareContext = async () => {
     if (!user) return null;
@@ -152,37 +167,57 @@ export function AppHeader({
 
   const publishCanvas = async (accessLevel: 'viewer' | 'editor') => {
     if (!user) return null;
+    if (!canShareCurrentCanvas) {
+      toast.error('Only the canvas owner can publish links');
+      return null;
+    }
     setSharing(true);
     try {
       const context = await resolveShareContext();
       if (!context) return null;
 
       let upsertedShare: any = null;
-      const rpc = await (supabase as any).rpc('upsert_canvas_share', {
+      let rpc = await supabase.rpc('upsert_canvas_share', {
         p_canvas_id: context.canvasId,
         p_access_level: accessLevel,
       });
 
-      if (rpc?.data) {
-        upsertedShare = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+      const rpcStatus = Number((rpc as any)?.status || (rpc?.error as any)?.status || 0);
+      const rpcMessage = String(
+        (rpc?.error as any)?.message
+        || (rpc?.error as any)?.details
+        || (rpc?.error as any)?.hint
+        || ''
+      ).toLowerCase();
+      const shouldRetryLegacySignature =
+        Boolean(rpc?.error)
+        && (
+          rpcStatus === 400
+          || rpcMessage.includes('function')
+          || rpcMessage.includes('signature')
+          || rpcMessage.includes('p_access_level')
+          || rpcMessage.includes('could not find')
+        );
+
+      if (shouldRetryLegacySignature) {
+        rpc = await supabase.rpc('upsert_canvas_share', { p_canvas_id: context.canvasId });
       }
 
-      if (!upsertedShare?.share_token) {
-        const fallback = await supabase
-          .from('shared_canvases')
-          .upsert(
-            {
-              canvas_id: context.canvasId,
-              owner_username: context.routeOwner,
-              canvas_name: context.parsed.canvasSlug,
-              page_name: context.parsed.pageSlug,
-              access_level: accessLevel,
-            } as any,
-            { onConflict: 'canvas_id' }
-          )
-          .select('share_token,access_level')
-          .single();
-        upsertedShare = fallback.data as any;
+      if (rpc?.error) {
+        const finalMessage = String(
+          (rpc?.error as any)?.message
+          || (rpc?.error as any)?.details
+          || (rpc?.error as any)?.hint
+          || ''
+        ).toLowerCase();
+        if (finalMessage.includes('not allowed')) {
+          toast.error('Only the canvas owner can publish links');
+          return null;
+        }
+      }
+
+      if (rpc?.data) {
+        upsertedShare = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
       }
 
       const shareToken = (upsertedShare as any)?.share_token;
@@ -192,13 +227,12 @@ export function AppHeader({
       }
 
       const resolvedAccess = ((upsertedShare as any)?.access_level as 'viewer' | 'editor' | undefined) || accessLevel;
-      const nextViewShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, shareToken, user.id));
-      const nextEditShareUrl = toPageApiUrl(toEditSharePagePath(context.routeOwner, shareToken, user.id));
-      const nextShareUrl = resolvedAccess === 'editor' ? nextEditShareUrl : nextViewShareUrl;
+      const nextShareUrl = buildShareUrl(context.routeOwner, shareToken, resolvedAccess, user.id);
 
       setShareAccessLevel(resolvedAccess);
       setShareUrl(nextShareUrl);
       setIsPublished(true);
+      setPublishedCanvasId(context.canvasId);
       return nextShareUrl;
     } catch {
       toast.error('Failed to publish');
@@ -210,6 +244,10 @@ export function AppHeader({
 
   const unpublishCanvas = async () => {
     if (!user) return false;
+    if (!canShareCurrentCanvas) {
+      toast.error('Only the canvas owner can unpublish links');
+      return false;
+    }
     setSharing(true);
     try {
       const context = await resolveShareContext();
@@ -227,6 +265,7 @@ export function AppHeader({
 
       setIsPublished(false);
       setShareUrl('');
+      setPublishedCanvasId(null);
       toast.success('Unpublished');
       return true;
     } finally {
@@ -236,29 +275,19 @@ export function AppHeader({
 
   const loadShareState = async () => {
     if (!user) return;
+    if (!canShareCurrentCanvas) {
+      setIsPublished(false);
+      setShareUrl('');
+      return;
+    }
     const context = await resolveShareContext();
     if (!context) return;
 
-    const { data } = await supabase
-      .from('shared_canvases')
-      .select('share_token,access_level')
-      .eq('canvas_id', context.canvasId)
-      .maybeSingle();
-
-    if (!data?.share_token) {
+    if (!publishedCanvasId || publishedCanvasId !== context.canvasId) {
       setIsPublished(false);
       setShareUrl('');
-      setShareAccessLevel('viewer');
       return;
     }
-
-    const resolvedAccess = (((data as any).access_level as 'viewer' | 'editor') || 'viewer');
-    const nextViewShareUrl = toPageApiUrl(toSharePagePath(context.routeOwner, (data as any).share_token, user.id));
-    const nextEditShareUrl = toPageApiUrl(toEditSharePagePath(context.routeOwner, (data as any).share_token, user.id));
-    const nextShareUrl = resolvedAccess === 'editor' ? nextEditShareUrl : nextViewShareUrl;
-    setShareAccessLevel(resolvedAccess);
-    setIsPublished(true);
-    setShareUrl(nextShareUrl);
   };
 
   const handleCopyShareLink = async () => {
@@ -281,6 +310,10 @@ export function AppHeader({
   };
 
   const handleShareAccessChange = async (nextAccess: 'viewer' | 'editor') => {
+    if (!canShareCurrentCanvas) {
+      toast.error('Only the canvas owner can change share permission');
+      return;
+    }
     setShareAccessLevel(nextAccess);
     if (!isPublished) return;
     const nextShareUrl = await publishCanvas(nextAccess);
@@ -681,9 +714,9 @@ export function AppHeader({
                   return next;
                 });
               }}
-              disabled={sharing}
+              disabled={sharing || !canShareCurrentCanvas}
               className="toolbar-btn"
-              title="Share canvas"
+              title={canShareCurrentCanvas ? 'Share canvas' : 'Only owner can share this canvas'}
             >
               <Share2 size={14} />
             </button>

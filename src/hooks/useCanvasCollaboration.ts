@@ -282,7 +282,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
       return { granted: false, active_count: 0, limit_count: 20 };
     }
 
-    const { data, error } = await (supabase as any).rpc('claim_editor_slot', {
+    const { data, error } = await supabase.rpc('claim_editor_slot', {
       p_canvas_id: canvasId,
       p_client_id: clientIdRef.current,
       p_ttl_seconds: 90,
@@ -308,7 +308,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   const releaseEditorSlot = useCallback(async () => {
     if (!canvasId || !identity?.id) return;
     try {
-      await (supabase as any).rpc('release_editor_slot', { p_canvas_id: canvasId });
+      await supabase.rpc('release_editor_slot', { p_canvas_id: canvasId });
     } catch {
       // Ignore release failures on teardown.
     }

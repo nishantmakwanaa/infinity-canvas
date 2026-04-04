@@ -333,6 +333,27 @@ const Index = () => {
     void createCanvas(nextName);
   };
 
+  const openCanvasFromUi = useCallback(async (canvasId: string) => {
+    if (!canvasId) return;
+
+    const joinedAccess = joinedCanvasAccessByCanvasId[canvasId];
+    const isJoinedCanvas = sharedCanvases.some((canvas) => canvas.id === canvasId);
+
+    if (isJoinedCanvas && session?.user?.id) {
+      await supabase
+        .rpc('sync_canvas_permission_from_share', {
+          p_canvas_id: canvasId,
+          p_access_level: joinedAccess === 'editor' ? 'editor' : 'viewer',
+        })
+        .catch(() => null);
+    }
+
+    const loaded = await selectCanvas(canvasId);
+    if (!loaded) {
+      toast.error('Unable to open this canvas. Please try again.');
+    }
+  }, [joinedCanvasAccessByCanvasId, selectCanvas, session?.user?.id, sharedCanvases]);
+
   const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
     if (!canvasId) return;
     if (rawUserToken) {
@@ -344,8 +365,8 @@ const Index = () => {
       navigate('/', { replace: true });
       return;
     }
-    void selectCanvas(canvasId);
-  }, [navigate, rawUserToken, selectCanvas]);
+    void openCanvasFromUi(canvasId);
+  }, [navigate, openCanvasFromUi, rawUserToken]);
 
   const handleCreateCanvasFromUi = useCallback(() => {
     if (rawUserToken) {
@@ -381,7 +402,7 @@ const Index = () => {
     pendingSidebarActionRef.current = null;
 
     if (pendingAction.type === 'select') {
-      void selectCanvas(pendingAction.canvasId);
+      void openCanvasFromUi(pendingAction.canvasId);
       return;
     }
 
@@ -393,7 +414,7 @@ const Index = () => {
     if (pendingAction.type === 'delete') {
       void deleteCanvases(pendingAction.ids);
     }
-  }, [createCanvas, deleteCanvases, rawUserToken, selectCanvas]);
+  }, [createCanvas, deleteCanvases, openCanvasFromUi, rawUserToken]);
 
   const onCanvasProfilerRender = useCallback<ProfilerOnRenderCallback>((_id, phase, actualDuration, baseDuration) => {
     if (phase === 'update' && actualDuration < 3) return;
@@ -453,7 +474,7 @@ const Index = () => {
     setRouteError('');
 
     const resolveRoute = async () => {
-      const { data, error } = await (supabase as any).rpc('open_page_api_link', {
+      const { data, error } = await supabase.rpc('open_page_api_link', {
         p_user_token: parsedApiRequest.userToken,
         p_canvas_token: parsedApiRequest.canvasToken,
         p_page_token: parsedApiRequest.pageToken,
@@ -485,7 +506,7 @@ const Index = () => {
       if (isShareRoute && session?.user?.id && row?.canvas_id) {
         const requestedAccess = (shareAccess === 'editor' || isShareEditLink) ? 'editor' : 'viewer';
         markJoinedCanvasAccess(row.canvas_id, requestedAccess);
-        await (supabase as any)
+        await supabase
           .rpc('sync_canvas_permission_from_share', {
             p_canvas_id: row.canvas_id,
             p_access_level: requestedAccess,
@@ -783,6 +804,7 @@ const Index = () => {
           user={user}
           loading={loading}
           onSignIn={() => setShowGuestAuthDialog(true)}
+          canShareCurrentCanvas={isCurrentCanvasOwned}
           readOnlyMode={effectiveReadOnlyMode}
           forceShowCollaboratorsButton={allowCollaboratorsForCurrentCanvas}
           currentCanvasId={effectiveCurrentCanvasId}
