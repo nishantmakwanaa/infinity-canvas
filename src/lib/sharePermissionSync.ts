@@ -2,7 +2,36 @@ import { supabase } from '@/integrations/supabase/client';
 
 export type ShareAccessLevel = 'viewer' | 'editor';
 
-let syncRpcMode: 'auto' | 'current' | 'legacy' | 'disabled' = 'auto';
+type SyncRpcMode = 'auto' | 'current' | 'legacy' | 'disabled';
+
+const SYNC_RPC_MODE_KEY = 'cnvs_sync_share_rpc_mode_v1';
+
+function readSyncRpcMode(): SyncRpcMode {
+  try {
+    const raw = String(localStorage.getItem(SYNC_RPC_MODE_KEY) || '').trim();
+    if (raw === 'current' || raw === 'legacy' || raw === 'disabled' || raw === 'auto') {
+      return raw;
+    }
+  } catch {
+    // ignore storage access issues
+  }
+  return 'auto';
+}
+
+function writeSyncRpcMode(mode: SyncRpcMode) {
+  try {
+    localStorage.setItem(SYNC_RPC_MODE_KEY, mode);
+  } catch {
+    // ignore storage access issues
+  }
+}
+
+let syncRpcMode: SyncRpcMode = readSyncRpcMode();
+
+function setSyncRpcMode(mode: SyncRpcMode) {
+  syncRpcMode = mode;
+  writeSyncRpcMode(mode);
+}
 
 async function callSyncRpc(canvasId: string, accessLevel?: ShareAccessLevel) {
   try {
@@ -58,7 +87,7 @@ export async function syncCanvasPermissionFromShare(
       return true;
     }
     if (legacy?.error && Number(legacy.error?.status || 0) === 400) {
-      syncRpcMode = 'disabled';
+      setSyncRpcMode('disabled');
     }
     return false;
   }
@@ -70,13 +99,13 @@ export async function syncCanvasPermissionFromShare(
     }
     const preferredStatus = Number(preferred?.error?.status || 0);
     if (preferred?.error && (isSignatureMismatchError(preferred.error) || preferredStatus === 400)) {
-      syncRpcMode = 'legacy';
+      setSyncRpcMode('legacy');
       const legacy = await callLegacySyncRpc(canvasId);
       if (!legacy?.error) {
         return true;
       }
       if (legacy?.error) {
-        syncRpcMode = Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto';
+        setSyncRpcMode(Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto');
       }
     }
     return false;
@@ -85,20 +114,20 @@ export async function syncCanvasPermissionFromShare(
   const preferred = await callSyncRpc(canvasId, accessLevel);
 
   if (!preferred?.error) {
-    syncRpcMode = 'current';
+    setSyncRpcMode('current');
     return true;
   }
   const preferredStatus = Number(preferred.error?.status || 0);
   if (!isSignatureMismatchError(preferred.error) && preferredStatus !== 400) return false;
 
-  syncRpcMode = 'legacy';
+  setSyncRpcMode('legacy');
 
   const legacy = await callLegacySyncRpc(canvasId);
   if (!legacy?.error) {
     return true;
   }
   if (legacy?.error) {
-    syncRpcMode = Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto';
+    setSyncRpcMode(Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto');
   }
   return false;
 }

@@ -16,7 +16,6 @@ import { useCanvasCollaboration } from '@/hooks/useCanvasCollaboration';
 import { getPageNumber, nextPageSlug, parseCanvasRouteName } from '@/lib/canvasNaming';
 import { parseSegmentedApiRequest, toOwnerPagePath } from '@/lib/pageApi';
 import { recordPerfMetric, startDroppedFrameMonitor } from '@/lib/perfTelemetry';
-import { syncCanvasPermissionFromShare } from '@/lib/sharePermissionSync';
 import { supabase } from '@/integrations/supabase/client';
 import { useLocation } from 'react-router-dom';
 
@@ -351,16 +350,6 @@ const Index = () => {
   const openCanvasFromUi = useCallback(async (canvasId: string) => {
     if (!canvasId) return;
 
-    const joinedAccess = joinedCanvasAccessByCanvasId[canvasId];
-    const isJoinedCanvas = Boolean(joinedAccess) || sharedCanvases.some((canvas) => canvas.id === canvasId);
-
-    if (isJoinedCanvas && session?.user?.id) {
-      void syncCanvasPermissionFromShare(
-        canvasId,
-        joinedAccess === 'editor' ? 'editor' : 'viewer'
-      );
-    }
-
     let loaded = false;
     try {
       loaded = await selectCanvas(canvasId);
@@ -370,7 +359,7 @@ const Index = () => {
     if (!loaded) {
       toast.error('Unable to open this canvas. Please try again.');
     }
-  }, [joinedCanvasAccessByCanvasId, selectCanvas, session?.user?.id, sharedCanvases]);
+  }, [selectCanvas]);
 
   const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
     if (!canvasId) return;

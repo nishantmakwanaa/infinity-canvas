@@ -1309,7 +1309,9 @@ begin
     end if;
 
     canvas_id := v_canvas_id;
-    left_ok := v_deleted;
+    -- Idempotent leave: non-owner users are considered successfully left
+    -- even when no permission row exists anymore.
+    left_ok := true;
     return next;
   end loop;
 end;
