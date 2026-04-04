@@ -30,7 +30,7 @@ interface PendingCanvasSyncSnapshot extends LocalCanvasSnapshot {
   canvasId: string;
   userId: string;
   updatedAt: string;
-  signature: string;
+  signature?: string;
 }
 
 function isLegacyUsernameCanvasName(name: string | null | undefined) {
@@ -115,7 +115,7 @@ function readPendingCanvasSync(key: string): PendingCanvasSyncSnapshot | null {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PendingCanvasSyncSnapshot;
-    if (!parsed || !parsed.canvasId || !parsed.userId || !Array.isArray(parsed.blocks) || !Array.isArray(parsed.drawings) || !parsed.pan || typeof parsed.zoom !== 'number' || typeof parsed.signature !== 'string') {
+    if (!parsed || !parsed.canvasId || !parsed.userId || !Array.isArray(parsed.blocks) || !Array.isArray(parsed.drawings) || !parsed.pan || typeof parsed.zoom !== 'number') {
       return null;
     }
     return parsed;
@@ -152,8 +152,8 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const currentCanvasIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const guestSaveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
-  const lastSavedSignatureRef = useRef('');
   const lastGuestSignatureRef = useRef('');
+  const pendingSyncCacheRef = useRef<Record<string, PendingCanvasSyncSnapshot>>({});
   const isFlushingRemoteRef = useRef(false);
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
@@ -424,18 +424,35 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     if (isFlushingRemoteRef.current) return;
 
     const userId = session.user.id;
+    const inMemoryPending = Object.values(pendingSyncCacheRef.current)
+      .filter((item) => item.userId === userId);
     const keys = listPendingCanvasSyncKeysForUser(userId);
-    if (!keys.length) return;
+    if (!keys.length && !inMemoryPending.length) return;
+
+    const mergedByCanvasId = new Map<string, PendingCanvasSyncSnapshot>();
+    for (const item of inMemoryPending) {
+      mergedByCanvasId.set(item.canvasId, item);
+    }
+    for (const key of keys) {
+      const pendingFromStorage = readPendingCanvasSync(key);
+      if (!pendingFromStorage) {
+        removePendingCanvasSync(key);
+        continue;
+      }
+      const existing = mergedByCanvasId.get(pendingFromStorage.canvasId);
+      if (!existing || Date.parse(existing.updatedAt) <= Date.parse(pendingFromStorage.updatedAt)) {
+        mergedByCanvasId.set(pendingFromStorage.canvasId, pendingFromStorage);
+      }
+    }
+
+    const pendingEntries = Array.from(mergedByCanvasId.values()).sort(
+      (a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt)
+    );
+    if (!pendingEntries.length) return;
 
     isFlushingRemoteRef.current = true;
     try {
-      for (const key of keys) {
-        const pending = readPendingCanvasSync(key);
-        if (!pending) {
-          removePendingCanvasSync(key);
-          continue;
-        }
-
+      for (const pending of pendingEntries) {
         const { error } = await supabase
           .from('canvases')
           .update({
@@ -449,21 +466,30 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
           .eq('user_id', userId);
 
         if (!error) {
-          removePendingCanvasSync(key);
-          if (pending.canvasId === canvasIdRef.current) {
-            lastSavedSignatureRef.current = pending.signature;
-          }
+          delete pendingSyncCacheRef.current[pending.canvasId];
+          removePendingCanvasSync(pendingCanvasSyncKey(userId, pending.canvasId));
           setCanvases((prev) => prev.map((c) => (
             c.id === pending.canvasId
               ? { ...c, updated_at: pending.updatedAt }
               : c
           )));
+        } else {
+          // Persist failed network sync for retry across reloads.
+          pendingSyncCacheRef.current[pending.canvasId] = pending;
+          writePendingCanvasSync(pending);
         }
       }
     } finally {
       isFlushingRemoteRef.current = false;
     }
   }, [session?.user?.id]);
+
+  const persistInMemoryPendingSync = useCallback(() => {
+    const entries = Object.values(pendingSyncCacheRef.current);
+    for (const snapshot of entries) {
+      writePendingCanvasSync(snapshot);
+    }
+  }, []);
 
   const renameCanvas = useCallback(async (nextCanvasName: string) => {
     if (!session?.user?.id || !currentCanvasIdRef.current || !currentCanvasName) return false;
@@ -556,23 +582,18 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => {
       const { blocks, pan, zoom, drawingElements } = useCanvasStore.getState();
-      const blocksPayload = JSON.parse(JSON.stringify(blocks));
-      const drawingsPayload = JSON.parse(JSON.stringify(drawingElements));
-      const signature = JSON.stringify([blocksPayload, drawingsPayload, pan.x, pan.y, zoom]);
-      if (signature === lastSavedSignatureRef.current) {
-        return;
-      }
+      const canvasId = canvasIdRef.current;
+      if (!canvasId) return;
 
-      writePendingCanvasSync({
+      pendingSyncCacheRef.current[canvasId] = {
         userId: session.user.id,
-        canvasId: canvasIdRef.current!,
-        blocks: blocksPayload,
-        drawings: drawingsPayload,
+        canvasId,
+        blocks: blocks as CanvasBlock[],
+        drawings: drawingElements as DrawingElement[],
         pan,
         zoom,
-        signature,
         updatedAt: new Date().toISOString(),
-      });
+      };
     }, 320);
   }, [session]);
 
@@ -646,11 +667,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
+        persistInMemoryPendingSync();
         void flushPendingCanvasSync();
       }
     };
 
     const onBeforeUnload = () => {
+      persistInMemoryPendingSync();
       void flushPendingCanvasSync();
     };
 
@@ -662,7 +685,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('beforeunload', onBeforeUnload);
     };
-  }, [enabled, flushPendingCanvasSync, session?.user?.id]);
+  }, [enabled, flushPendingCanvasSync, persistInMemoryPendingSync, session?.user?.id]);
 
   useEffect(() => {
     if (!enabled || session?.user?.id) return;
@@ -676,9 +699,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       if (guestSaveTimeoutRef.current) clearTimeout(guestSaveTimeoutRef.current);
+      persistInMemoryPendingSync();
       void flushPendingCanvasSync();
     };
-  }, [flushPendingCanvasSync]);
+  }, [flushPendingCanvasSync, persistInMemoryPendingSync]);
 
   return {
     canvasId: canvasIdRef.current,

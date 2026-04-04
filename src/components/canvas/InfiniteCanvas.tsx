@@ -532,7 +532,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
             ))}
           </div>
 
-          <DrawingLayer readOnly={readOnly} leftOffsetPercent={leftOffsetPercent} />
+          <DrawingLayer readOnly={readOnly} />
         </>
       )}
 

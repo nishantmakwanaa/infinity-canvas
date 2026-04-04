@@ -5,6 +5,7 @@ const DRAWING_TOOLS = ['pencil', 'eraser', 'text', 'shape', 'line', 'arrow'];
 const MIN_FREEHAND_POINT_DISTANCE = 0.7;
 const MIN_SHAPE_DISTANCE = 3;
 const ERASER_HIT_STROKE = 16;
+const TOUCH_FALLBACK_POINTER_ID = -1;
 
 function distancePointToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number) {
   const dx = x2 - x1;
@@ -217,8 +218,9 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
   }
 }
 
-export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: boolean; leftOffsetPercent?: number }) {
+export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
   const { drawingElements, activeTool, toolSettings, pan, zoom, addDrawingElement } = useCanvasStore();
+  const supportsPointerEvents = typeof window !== 'undefined' && 'PointerEvent' in window;
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [drawEnd, setDrawEnd] = useState<{ x: number; y: number } | null>(null);
@@ -303,6 +305,63 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
     setDrawEnd(null);
   }, [activeTool, readOnly]);
 
+  const finalizeDrawing = useCallback((finalPos?: { x: number; y: number }) => {
+    if (!isDrawing.current) return;
+    isDrawing.current = false;
+
+    if (finalPos) {
+      if (drawToolRef.current === 'pencil') {
+        const lastPoint = pathRef.current[pathRef.current.length - 1];
+        const minDistance = MIN_FREEHAND_POINT_DISTANCE / Math.max(0.2, zoom);
+        if (!lastPoint || Math.hypot(finalPos.x - lastPoint.x, finalPos.y - lastPoint.y) >= minDistance) {
+          pathRef.current.push(finalPos);
+        }
+      }
+      if (drawToolRef.current === 'shape' || drawToolRef.current === 'line' || drawToolRef.current === 'arrow') {
+        drawEndRef.current = finalPos;
+      }
+    }
+
+    const path = pathRef.current;
+    const start = drawStartRef.current;
+    const end = drawEndRef.current;
+    const drawTool = drawToolRef.current;
+
+    if (drawTool === 'pencil' && path.length > 0) {
+      const normalizedPath = path.length === 1
+        ? [path[0], { x: path[0].x + 0.01, y: path[0].y + 0.01 }]
+        : path;
+      addDrawingElement({ id: genId(), type: 'freehand', points: normalizedPath, color: toolSettings.color, strokeWidth: strokeW });
+      pathRef.current = [];
+      setCurrentPath([]);
+    } else if (drawTool === 'eraser') {
+      // Continuous erasing already handled in pointer/touch move.
+    } else if (drawTool === 'shape' && start && end) {
+      const x = Math.min(start.x, end.x);
+      const y = Math.min(start.y, end.y);
+      const w = Math.abs(end.x - start.x);
+      const h = Math.abs(end.y - start.y);
+      if (w > MIN_SHAPE_DISTANCE || h > MIN_SHAPE_DISTANCE) {
+        addDrawingElement({ id: genId(), type: toolSettings.shapeType, x, y, w, h, color: toolSettings.color, strokeWidth: strokeW });
+      }
+      drawStartRef.current = null;
+      drawEndRef.current = null;
+      setDrawStart(null);
+      setDrawEnd(null);
+    } else if ((drawTool === 'line' || drawTool === 'arrow') && start && end) {
+      const dist = Math.hypot(end.x - start.x, end.y - start.y);
+      if (dist > MIN_SHAPE_DISTANCE) {
+        addDrawingElement({ id: genId(), type: drawTool, x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: toolSettings.color, strokeWidth: strokeW });
+      }
+      drawStartRef.current = null;
+      drawEndRef.current = null;
+      setDrawStart(null);
+      setDrawEnd(null);
+    }
+
+    drawToolRef.current = null;
+  }, [addDrawingElement, strokeW, toolSettings.color, toolSettings.shapeType, zoom]);
+
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!isActive) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -374,7 +433,6 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
   const handlePointerUp = (e?: React.PointerEvent<SVGSVGElement>) => {
     if (!isDrawing.current) return;
     if (activePointerIdRef.current !== null && e && e.pointerId !== activePointerIdRef.current) return;
-    isDrawing.current = false;
     if (activePointerIdRef.current !== null && e) {
       try {
         e.currentTarget.releasePointerCapture(activePointerIdRef.current);
@@ -384,61 +442,86 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
     }
     activePointerIdRef.current = null;
 
-    if (e) {
-      const finalPos = toCanvasFromClient(e.clientX, e.clientY);
-      if (drawToolRef.current === 'pencil') {
-        const lastPoint = pathRef.current[pathRef.current.length - 1];
-        const minDistance = MIN_FREEHAND_POINT_DISTANCE / Math.max(0.2, zoom);
-        if (!lastPoint || Math.hypot(finalPos.x - lastPoint.x, finalPos.y - lastPoint.y) >= minDistance) {
-          pathRef.current.push(finalPos);
-        }
-      }
-      if (drawToolRef.current === 'shape' || drawToolRef.current === 'line' || drawToolRef.current === 'arrow') {
-        drawEndRef.current = finalPos;
-      }
-    }
-
-    const path = pathRef.current;
-    const start = drawStartRef.current;
-    const end = drawEndRef.current;
-    const drawTool = drawToolRef.current;
-
-    if (drawTool === 'pencil' && path.length > 0) {
-      const normalizedPath = path.length === 1
-        ? [path[0], { x: path[0].x + 0.01, y: path[0].y + 0.01 }]
-        : path;
-      addDrawingElement({ id: genId(), type: 'freehand', points: normalizedPath, color: toolSettings.color, strokeWidth: strokeW });
-      pathRef.current = [];
-      setCurrentPath([]);
-    } else if (drawTool === 'eraser') {
-      // Continuous erasing already handled in pointer move.
-    } else if (drawTool === 'shape' && start && end) {
-      const x = Math.min(start.x, end.x);
-      const y = Math.min(start.y, end.y);
-      const w = Math.abs(end.x - start.x);
-      const h = Math.abs(end.y - start.y);
-      if (w > MIN_SHAPE_DISTANCE || h > MIN_SHAPE_DISTANCE) {
-        addDrawingElement({ id: genId(), type: toolSettings.shapeType, x, y, w, h, color: toolSettings.color, strokeWidth: strokeW });
-      }
-      drawStartRef.current = null;
-      drawEndRef.current = null;
-      setDrawStart(null);
-      setDrawEnd(null);
-    } else if ((drawTool === 'line' || drawTool === 'arrow') && start && end) {
-      const dist = Math.hypot(end.x - start.x, end.y - start.y);
-      if (dist > MIN_SHAPE_DISTANCE) {
-        addDrawingElement({ id: genId(), type: drawTool, x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: toolSettings.color, strokeWidth: strokeW });
-      }
-      drawStartRef.current = null;
-      drawEndRef.current = null;
-      setDrawStart(null);
-      setDrawEnd(null);
-    }
-    drawToolRef.current = null;
+    const finalPos = e ? toCanvasFromClient(e.clientX, e.clientY) : undefined;
+    finalizeDrawing(finalPos);
 
     if (e) {
       e.stopPropagation();
+      e.preventDefault();
     }
+  };
+
+  const handleTouchStartFallback = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (supportsPointerEvents) return;
+    if (!isActive || e.touches.length !== 1) return;
+
+    const t = e.touches[0];
+    const pos = toCanvasFromClient(t.clientX, t.clientY);
+    activePointerIdRef.current = TOUCH_FALLBACK_POINTER_ID;
+
+    if (activeTool === 'pencil') {
+      drawToolRef.current = activeTool;
+      isDrawing.current = true;
+      pathRef.current = [pos];
+      setCurrentPath([pos]);
+    } else if (activeTool === 'eraser') {
+      drawToolRef.current = activeTool;
+      isDrawing.current = true;
+      eraseAtPoint(pos.x, pos.y);
+    } else if (activeTool === 'text') {
+      setTextPos(pos);
+      setTextValue('');
+      setTimeout(() => inputRef.current?.focus(), 50);
+    } else if (activeTool === 'shape' || activeTool === 'line' || activeTool === 'arrow') {
+      drawToolRef.current = activeTool;
+      isDrawing.current = true;
+      drawStartRef.current = pos;
+      drawEndRef.current = pos;
+      setDrawStart(pos);
+      setDrawEnd(pos);
+    }
+
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
+  const handleTouchMoveFallback = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (supportsPointerEvents) return;
+    if (!isActive || !isDrawing.current || activePointerIdRef.current !== TOUCH_FALLBACK_POINTER_ID) return;
+    if (e.touches.length !== 1) return;
+
+    const t = e.touches[0];
+    const pos = toCanvasFromClient(t.clientX, t.clientY);
+
+    if (drawToolRef.current === 'pencil') {
+      const lastPoint = pathRef.current[pathRef.current.length - 1];
+      const minDistance = MIN_FREEHAND_POINT_DISTANCE / Math.max(0.2, zoom);
+      if (!lastPoint || Math.hypot(pos.x - lastPoint.x, pos.y - lastPoint.y) >= minDistance) {
+        pathRef.current.push(pos);
+      }
+      schedulePreviewUpdate();
+    } else if (drawToolRef.current === 'eraser') {
+      eraseAtPoint(pos.x, pos.y);
+    } else if (drawToolRef.current === 'shape' || drawToolRef.current === 'line' || drawToolRef.current === 'arrow') {
+      drawEndRef.current = pos;
+      scheduleEndPreviewUpdate();
+    }
+
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
+  const handleTouchEndFallback = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (supportsPointerEvents) return;
+    if (activePointerIdRef.current !== TOUCH_FALLBACK_POINTER_ID) return;
+
+    const t = e.changedTouches[0];
+    const finalPos = t ? toCanvasFromClient(t.clientX, t.clientY) : undefined;
+    finalizeDrawing(finalPos);
+    activePointerIdRef.current = null;
+
+    e.stopPropagation();
+    e.preventDefault();
   };
 
   const handleTextSubmit = () => {
@@ -476,13 +559,17 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
       <svg
         ref={layerRef}
         data-drawing-layer="true"
-        className={`fixed top-0 bottom-0 right-0 ${isActive ? 'z-10' : 'z-[5] pointer-events-none'}`}
-        style={{ left: `${leftOffsetPercent}%`, width: 'auto', height: '100%', cursor: isActive ? getCursor() : 'default', touchAction: isActive ? 'none' : 'auto' }}
+        className={`absolute inset-0 ${isActive ? 'z-10' : 'z-[5] pointer-events-none'}`}
+        style={{ width: '100%', height: '100%', cursor: isActive ? getCursor() : 'default', touchAction: isActive ? 'none' : 'auto' }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onLostPointerCapture={handlePointerUp}
+        onTouchStart={handleTouchStartFallback}
+        onTouchMove={handleTouchMoveFallback}
+        onTouchEnd={handleTouchEndFallback}
+        onTouchCancel={handleTouchEndFallback}
       >
         <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
           {drawingElements.map((el) => (
@@ -528,8 +615,8 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
           ref={inputRef}
           className="fixed z-20 bg-transparent border-b border-foreground text-foreground font-mono outline-none"
           style={{
-            left: textPos.x * zoom + pan.x + (leftOffsetPercent / 100) * window.innerWidth,
-            top: textPos.y * zoom + pan.y - fontSize / 2,
+            left: textPos.x * zoom + pan.x + (layerRef.current?.getBoundingClientRect().left || 0),
+            top: textPos.y * zoom + pan.y + (layerRef.current?.getBoundingClientRect().top || 0) - fontSize / 2,
             fontSize: fontSize * zoom,
             fontFamily,
           }}
