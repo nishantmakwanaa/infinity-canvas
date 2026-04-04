@@ -68,9 +68,6 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
     selectedBlock && BLOCK_TYPES_WITH_STYLES.includes(selectedBlock.type)
   );
 
-  if (!isDrawingSettingsMode && !isBlockSettingsMode) return null;
-  if (isMobile && !mobileOpen) return null;
-
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
@@ -156,6 +153,9 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
     () => COLORS.map((color) => (isDarkMode && color.toLowerCase() === '#000000' ? '#ffffff' : color)),
     [isDarkMode]
   );
+
+  if (!isDrawingSettingsMode && !isBlockSettingsMode) return null;
+  if (isMobile && !mobileOpen) return null;
 
   const sectionGridClass = 'grid grid-cols-4 gap-1.5 mt-1.5';
   const optionButtonClass = 'h-8 text-[10px] font-mono border transition-colors touch-manipulation';

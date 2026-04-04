@@ -363,35 +363,44 @@ const Index = () => {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (effectiveCanvasLoading || !isEditorMode) return;
+
+      if (!e.repeat && e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey && (e.code === 'AltLeft' || e.code === 'AltRight' || e.code === 'ControlLeft' || e.code === 'ControlRight')) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('cnvs-open-shortcuts'));
+        return;
+      }
+
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
       const isTyping = tag === 'input' || tag === 'textarea' || (target as any)?.isContentEditable;
+      const store = useCanvasStore.getState();
+      const hasOnlySingleChar = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
       if (isTyping) return;
+      if (store.activeTool === 'text' && hasOnlySingleChar) return;
 
       const code = e.code;
-      const store = useCanvasStore.getState();
-      const hasAltShift = e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey;
-      if (!hasAltShift) return;
+      const hasCtrlOnly = e.ctrlKey && !e.altKey && !e.metaKey;
+      const hasCtrlAltOnly = e.ctrlKey && e.altKey && !e.metaKey;
 
-      if (hasAltShift && code === 'KeyZ') {
+      if (hasCtrlOnly && code === 'KeyZ') {
         e.preventDefault();
         handleUndo();
         return;
       }
 
-      if (hasAltShift && code === 'KeyY') {
+      if (hasCtrlOnly && code === 'KeyY') {
         e.preventDefault();
         handleRedo();
         return;
       }
 
-      if (hasAltShift && code === 'KeyC') {
+      if (hasCtrlOnly && code === 'KeyC') {
         e.preventDefault();
         copySelectedBlocks();
         return;
       }
 
-      if (hasAltShift && code === 'KeyK') {
+      if (hasCtrlOnly && code === 'KeyX') {
         e.preventDefault();
         cutSelectedBlocks();
         return;
@@ -404,52 +413,47 @@ const Index = () => {
         return;
       }
 
-      if (hasAltShift && code === 'KeyB') {
+      if (hasCtrlOnly && code === 'KeyB') {
         e.preventDefault();
         toggleTextFormat('textBold');
         return;
       }
 
-      if (hasAltShift && code === 'KeyI') {
+      if (hasCtrlOnly && code === 'KeyI') {
         e.preventDefault();
         toggleTextFormat('textItalic');
         return;
       }
 
-      if (hasAltShift && code === 'KeyU') {
+      if (hasCtrlOnly && code === 'KeyU') {
         e.preventDefault();
         toggleTextFormat('textUnderline');
         return;
       }
 
-      if (hasAltShift && code === 'KeyH') {
+      if (hasCtrlOnly && e.shiftKey && code === 'KeyH') {
         e.preventDefault();
         toggleTextFormat('textHighlight');
         return;
       }
 
-      if (code === 'Digit1') { e.preventDefault(); setThemePreference('light'); return; }
-      if (code === 'Digit2') { e.preventDefault(); setThemePreference('dark'); return; }
-      if (code === 'Digit3') { e.preventDefault(); setThemePreference('auto'); return; }
+      if (hasOnlySingleChar && code === 'KeyN') { e.preventDefault(); store.addBlock('note'); return; }
+      if (hasOnlySingleChar && code === 'KeyK') { e.preventDefault(); store.addBlock('link'); return; }
+      if (hasOnlySingleChar && code === 'KeyD') { e.preventDefault(); store.addBlock('todo'); return; }
+      if (hasOnlySingleChar && code === 'KeyM') { e.preventDefault(); store.addBlock('media'); return; }
 
-      if (code === 'KeyN') { e.preventDefault(); store.addBlock('note'); return; }
-      if (code === 'KeyL') { e.preventDefault(); store.addBlock('link'); return; }
-      if (code === 'KeyT') { e.preventDefault(); store.addBlock('todo'); return; }
-      if (code === 'KeyM') { e.preventDefault(); store.addBlock('media'); return; }
+      if (hasOnlySingleChar && code === 'KeyS') { e.preventDefault(); store.setActiveTool('select'); return; }
+      if (hasOnlySingleChar && code === 'KeyH') { e.preventDefault(); store.setActiveTool('hand'); return; }
+      if (hasOnlySingleChar && code === 'KeyP') { e.preventDefault(); store.setActiveTool('pencil'); return; }
+      if (hasOnlySingleChar && code === 'KeyE') { e.preventDefault(); store.setActiveTool('eraser'); return; }
+      if (hasOnlySingleChar && code === 'KeyT') { e.preventDefault(); store.setActiveTool('text'); return; }
+      if (hasOnlySingleChar && code === 'KeyG') { e.preventDefault(); store.setActiveTool('shape'); return; }
+      if (hasOnlySingleChar && code === 'KeyL') { e.preventDefault(); store.setActiveTool('line'); return; }
+      if (hasOnlySingleChar && code === 'KeyA') { e.preventDefault(); store.setActiveTool('arrow'); return; }
 
-      if (code === 'KeyV') { e.preventDefault(); store.setActiveTool('select'); return; }
-      if (code === 'KeyW') { e.preventDefault(); store.setActiveTool('hand'); return; }
-      if (code === 'KeyP') { e.preventDefault(); store.setActiveTool('pencil'); return; }
-      if (code === 'KeyE') { e.preventDefault(); store.setActiveTool('eraser'); return; }
-      if (code === 'KeyQ') { e.preventDefault(); store.setActiveTool('text'); return; }
-      if (code === 'KeyS') { e.preventDefault(); store.setActiveTool('shape'); return; }
-      if (code === 'KeyO') { e.preventDefault(); store.setActiveTool('line'); return; }
-      if (code === 'KeyA') { e.preventDefault(); store.setActiveTool('arrow'); return; }
-
-      if (code === 'Equal') { e.preventDefault(); store.setZoom(store.zoom * 1.15); return; }
-      if (code === 'Minus') { e.preventDefault(); store.setZoom(store.zoom / 1.15); return; }
-      if (code === 'Digit0') { e.preventDefault(); store.setZoom(1); store.setPan({ x: 0, y: 0 }); return; }
-      if (code === 'KeyR') { e.preventDefault(); store.setPan({ x: 0, y: 0 }); store.setZoom(1); return; }
+      if (hasCtrlAltOnly && code === 'Digit1') { e.preventDefault(); setThemePreference('light'); return; }
+      if (hasCtrlAltOnly && code === 'Digit2') { e.preventDefault(); setThemePreference('dark'); return; }
+      if (hasCtrlAltOnly && code === 'Digit3') { e.preventDefault(); setThemePreference('auto'); return; }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);

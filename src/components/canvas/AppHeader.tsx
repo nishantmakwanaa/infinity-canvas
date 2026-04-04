@@ -228,6 +228,12 @@ export function AppHeader({
     setAvatarRetryUrl(null);
   }, [user?.id, user?.avatarUrl]);
 
+  useEffect(() => {
+    const onOpenShortcuts = () => setShowShortcutsDialog(true);
+    window.addEventListener('cnvs-open-shortcuts', onOpenShortcuts);
+    return () => window.removeEventListener('cnvs-open-shortcuts', onOpenShortcuts);
+  }, []);
+
   const handleAvatarImageError = () => {
     const current = profileAvatarSrc || '';
     if (!avatarRetryUrl && user?.avatarUrl) {

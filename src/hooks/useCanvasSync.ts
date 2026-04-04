@@ -17,12 +17,20 @@ interface UseCanvasSyncOptions {
 
 const GUEST_CANVAS_STORAGE_KEY = 'cnvs_guest_canvas_v1';
 const LAST_OPENED_CANVAS_KEY_PREFIX = 'cnvs_last_opened_canvas_v1_';
+const PENDING_CANVAS_SYNC_KEY_PREFIX = 'cnvs_pending_canvas_sync_v1_';
 
 interface LocalCanvasSnapshot {
   blocks: CanvasBlock[];
   drawings: DrawingElement[];
   pan: { x: number; y: number };
   zoom: number;
+}
+
+interface PendingCanvasSyncSnapshot extends LocalCanvasSnapshot {
+  canvasId: string;
+  userId: string;
+  updatedAt: string;
+  signature: string;
 }
 
 function isLegacyUsernameCanvasName(name: string | null | undefined) {
@@ -87,6 +95,57 @@ function writeLastOpenedCanvasId(userId: string, canvasId: string) {
   }
 }
 
+function pendingCanvasSyncKey(userId: string, canvasId: string) {
+  return `${PENDING_CANVAS_SYNC_KEY_PREFIX}${userId}_${canvasId}`;
+}
+
+function writePendingCanvasSync(snapshot: PendingCanvasSyncSnapshot) {
+  try {
+    localStorage.setItem(
+      pendingCanvasSyncKey(snapshot.userId, snapshot.canvasId),
+      JSON.stringify(snapshot)
+    );
+  } catch {
+    // Ignore quota/storage access errors.
+  }
+}
+
+function readPendingCanvasSync(key: string): PendingCanvasSyncSnapshot | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingCanvasSyncSnapshot;
+    if (!parsed || !parsed.canvasId || !parsed.userId || !Array.isArray(parsed.blocks) || !Array.isArray(parsed.drawings) || !parsed.pan || typeof parsed.zoom !== 'number' || typeof parsed.signature !== 'string') {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function removePendingCanvasSync(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Ignore storage access errors.
+  }
+}
+
+function listPendingCanvasSyncKeysForUser(userId: string) {
+  try {
+    const prefix = `${PENDING_CANVAS_SYNC_KEY_PREFIX}${userId}_`;
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) keys.push(key);
+    }
+    return keys;
+  } catch {
+    return [];
+  }
+}
+
 export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOptions) {
   const enabled = options?.enabled ?? true;
   const canvasIdRef = useRef<string | null>(null);
@@ -95,6 +154,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const guestSaveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const lastSavedSignatureRef = useRef('');
   const lastGuestSignatureRef = useRef('');
+  const isFlushingRemoteRef = useRef(false);
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
@@ -359,14 +419,51 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     isLoadingRef.current = false;
   }, [createCanvas, enabled, loadCanvasById, refreshCanvases, session?.user?.id]);
 
-  const getAdaptiveSaveDelayMs = () => {
-    const connection = (navigator as any)?.connection;
-    if (connection?.saveData) return 2600;
-    const effectiveType = String(connection?.effectiveType || '').toLowerCase();
-    if (effectiveType.includes('2g')) return 2400;
-    if (effectiveType.includes('3g')) return 1800;
-    return 1000;
-  };
+  const flushPendingCanvasSync = useCallback(async () => {
+    if (!session?.user?.id) return;
+    if (isFlushingRemoteRef.current) return;
+
+    const userId = session.user.id;
+    const keys = listPendingCanvasSyncKeysForUser(userId);
+    if (!keys.length) return;
+
+    isFlushingRemoteRef.current = true;
+    try {
+      for (const key of keys) {
+        const pending = readPendingCanvasSync(key);
+        if (!pending) {
+          removePendingCanvasSync(key);
+          continue;
+        }
+
+        const { error } = await supabase
+          .from('canvases')
+          .update({
+            blocks: pending.blocks,
+            drawings: pending.drawings,
+            pan_x: pending.pan.x,
+            pan_y: pending.pan.y,
+            zoom: pending.zoom,
+          } as any)
+          .eq('id', pending.canvasId)
+          .eq('user_id', userId);
+
+        if (!error) {
+          removePendingCanvasSync(key);
+          if (pending.canvasId === canvasIdRef.current) {
+            lastSavedSignatureRef.current = pending.signature;
+          }
+          setCanvases((prev) => prev.map((c) => (
+            c.id === pending.canvasId
+              ? { ...c, updated_at: pending.updatedAt }
+              : c
+          )));
+        }
+      }
+    } finally {
+      isFlushingRemoteRef.current = false;
+    }
+  }, [session?.user?.id]);
 
   const renameCanvas = useCallback(async (nextCanvasName: string) => {
     if (!session?.user?.id || !currentCanvasIdRef.current || !currentCanvasName) return false;
@@ -457,9 +554,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     if (!session?.user?.id || !canvasIdRef.current || isLoadingRef.current) return;
 
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    const delayMs = getAdaptiveSaveDelayMs();
-
-    saveTimeoutRef.current = setTimeout(async () => {
+    saveTimeoutRef.current = setTimeout(() => {
       const { blocks, pan, zoom, drawingElements } = useCanvasStore.getState();
       const blocksPayload = JSON.parse(JSON.stringify(blocks));
       const drawingsPayload = JSON.parse(JSON.stringify(drawingElements));
@@ -468,24 +563,17 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         return;
       }
 
-      const { error } = await supabase
-        .from('canvases')
-        .update({
-          blocks: blocksPayload,
-          drawings: drawingsPayload,
-          pan_x: pan.x,
-          pan_y: pan.y,
-          zoom,
-        } as any)
-        .eq('id', canvasIdRef.current!);
-      if (!error) {
-        lastSavedSignatureRef.current = signature;
-        setCanvases((prev) => {
-          const now = new Date().toISOString();
-          return prev.map((c) => (c.id === canvasIdRef.current ? { ...c, updated_at: now } : c));
-        });
-      }
-    }, delayMs);
+      writePendingCanvasSync({
+        userId: session.user.id,
+        canvasId: canvasIdRef.current!,
+        blocks: blocksPayload,
+        drawings: drawingsPayload,
+        pan,
+        zoom,
+        signature,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 320);
   }, [session]);
 
   const saveGuestCanvas = useCallback(() => {
@@ -548,6 +636,35 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   }, [enabled, session?.user?.id, saveCanvas]);
 
   useEffect(() => {
+    if (!enabled || !session?.user?.id) return;
+
+    void flushPendingCanvasSync();
+
+    const intervalId = window.setInterval(() => {
+      void flushPendingCanvasSync();
+    }, 60_000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        void flushPendingCanvasSync();
+      }
+    };
+
+    const onBeforeUnload = () => {
+      void flushPendingCanvasSync();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, [enabled, flushPendingCanvasSync, session?.user?.id]);
+
+  useEffect(() => {
     if (!enabled || session?.user?.id) return;
     const unsub = useCanvasStore.subscribe(() => {
       saveGuestCanvas();
@@ -559,8 +676,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       if (guestSaveTimeoutRef.current) clearTimeout(guestSaveTimeoutRef.current);
+      void flushPendingCanvasSync();
     };
-  }, []);
+  }, [flushPendingCanvasSync]);
 
   return {
     canvasId: canvasIdRef.current,

@@ -1,11 +1,68 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import { useCanvasStore, DrawingElement, SIZE_MAP, FONT_MAP, genId } from '@/store/canvasStore';
 
 const DRAWING_TOOLS = ['pencil', 'eraser', 'text', 'shape', 'line', 'arrow'];
+const MIN_FREEHAND_POINT_DISTANCE = 0.7;
+const MIN_SHAPE_DISTANCE = 3;
+const ERASER_HIT_STROKE = 16;
+
+function distancePointToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(px - x1, py - y1);
+  }
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+  const projX = x1 + t * dx;
+  const projY = y1 + t * dy;
+  return Math.hypot(px - projX, py - projY);
+}
+
+function isPointNearElement(element: DrawingElement, x: number, y: number, radius: number) {
+  if (element.type === 'freehand') {
+    const pts = element.points || [];
+    for (let i = 1; i < pts.length; i += 1) {
+      if (distancePointToSegment(x, y, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y) <= radius) return true;
+    }
+    return pts.length ? Math.hypot(x - pts[0].x, y - pts[0].y) <= radius : false;
+  }
+
+  if (element.type === 'line' || element.type === 'arrow') {
+    return distancePointToSegment(x, y, element.x1, element.y1, element.x2, element.y2) <= radius;
+  }
+
+  if (element.type === 'text') {
+    const estWidth = Math.max(20, element.content.length * element.fontSize * 0.62);
+    const top = element.y - element.fontSize;
+    return x >= element.x - radius && x <= element.x + estWidth + radius && y >= top - radius && y <= element.y + radius;
+  }
+
+  const sx = element.x;
+  const sy = element.y;
+  const ex = element.x + Math.abs(element.w);
+  const ey = element.y + Math.abs(element.h);
+  return x >= sx - radius && x <= ex + radius && y >= sy - radius && y <= ey + radius;
+}
 
 function pointsToPath(pts: { x: number; y: number }[]): string {
   if (pts.length < 2) return '';
-  return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+  if (pts.length === 2) {
+    return `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`;
+  }
+
+  // Smooth freehand strokes with quadratic segments to reduce jitter.
+  let path = `M ${pts[0].x} ${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const curr = pts[i];
+    const next = pts[i + 1];
+    const midX = (curr.x + next.x) / 2;
+    const midY = (curr.y + next.y) / 2;
+    path += ` Q ${curr.x} ${curr.y}, ${midX} ${midY}`;
+  }
+  const prev = pts[pts.length - 2];
+  const last = pts[pts.length - 1];
+  path += ` Q ${prev.x} ${prev.y}, ${last.x} ${last.y}`;
+  return path;
 }
 
 function shapePath(type: string, x: number, y: number, w: number, h: number): string {
@@ -63,6 +120,15 @@ function shapePath(type: string, x: number, y: number, w: number, h: number): st
 }
 
 function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement; onDelete?: (id: string) => void }) {
+  const eraseProps = onDelete
+    ? {
+        onPointerDown: (event: React.PointerEvent<SVGElement>) => {
+          event.stopPropagation();
+          onDelete(element.id);
+        },
+      }
+    : {};
+
   const common = onDelete
     ? {
         onPointerDown: (event: React.PointerEvent<SVGElement>) => {
@@ -73,8 +139,15 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
     : {};
 
   switch (element.type) {
-    case 'freehand':
-      return <path d={pointsToPath(element.points)} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
+    case 'freehand': {
+      const d = pointsToPath(element.points);
+      return (
+        <g style={onDelete ? { cursor: 'pointer' } : {}}>
+          <path d={d} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...common} />
+          {onDelete && <path d={d} fill="none" stroke="transparent" strokeWidth={Math.max(ERASER_HIT_STROKE, element.strokeWidth + 10)} strokeLinecap="round" strokeLinejoin="round" {...eraseProps} />}
+        </g>
+      );
+    }
     case 'rectangle':
       return <rect x={element.x} y={element.y} width={element.w} height={element.h} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
     case 'ellipse':
@@ -86,7 +159,12 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
     case 'star':
     case 'cloud':
     case 'heart':
-      return <path d={shapePath(element.type, element.x, element.y, Math.abs(element.w), Math.abs(element.h))} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
+      return (
+        <g style={onDelete ? { cursor: 'pointer' } : {}}>
+          <path d={shapePath(element.type, element.x, element.y, Math.abs(element.w), Math.abs(element.h))} fill="none" stroke={element.color} strokeWidth={element.strokeWidth} {...common} />
+          {onDelete && <path d={shapePath(element.type, element.x, element.y, Math.abs(element.w), Math.abs(element.h))} fill="none" stroke="transparent" strokeWidth={Math.max(ERASER_HIT_STROKE, element.strokeWidth + 10)} {...eraseProps} />}
+        </g>
+      );
     case 'text':
       return (
         <g {...common} style={onDelete ? { cursor: 'pointer' } : {}}>
@@ -114,7 +192,12 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
         </g>
       );
     case 'line':
-      return <line x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" {...common} style={onDelete ? { cursor: 'pointer' } : {}} />;
+      return (
+        <g style={onDelete ? { cursor: 'pointer' } : {}}>
+          <line x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" {...common} />
+          {onDelete && <line x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} stroke="transparent" strokeWidth={Math.max(ERASER_HIT_STROKE, element.strokeWidth + 10)} strokeLinecap="round" {...eraseProps} />}
+        </g>
+      );
     case 'arrow': {
       const angle = Math.atan2(element.y2 - element.y1, element.x2 - element.x1);
       const headLen = 12;
@@ -127,6 +210,7 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
           <line x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" />
           <line x1={element.x2} y1={element.y2} x2={ax1} y2={ay1} stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" />
           <line x1={element.x2} y1={element.y2} x2={ax2} y2={ay2} stroke={element.color} strokeWidth={element.strokeWidth} strokeLinecap="round" />
+          {onDelete && <line x1={element.x1} y1={element.y1} x2={element.x2} y2={element.y2} stroke="transparent" strokeWidth={Math.max(ERASER_HIT_STROKE, element.strokeWidth + 10)} strokeLinecap="round" {...eraseProps} />}
         </g>
       );
     }
@@ -134,7 +218,7 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
 }
 
 export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: boolean; leftOffsetPercent?: number }) {
-  const { drawingElements, activeTool, toolSettings, pan, zoom, addDrawingElement, deleteDrawingElement } = useCanvasStore();
+  const { drawingElements, activeTool, toolSettings, pan, zoom, addDrawingElement } = useCanvasStore();
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [drawEnd, setDrawEnd] = useState<{ x: number; y: number } | null>(null);
@@ -146,6 +230,8 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
   const drawEndRef = useRef<{ x: number; y: number } | null>(null);
   const drawToolRef = useRef<string | null>(null);
   const activePointerIdRef = useRef<number | null>(null);
+  const previewRafRef = useRef<number | null>(null);
+  const endPreviewRafRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const layerRef = useRef<SVGSVGElement>(null);
 
@@ -165,15 +251,70 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
   const fontSize = SIZE_MAP[toolSettings.size].text;
   const fontFamily = FONT_MAP[toolSettings.fontFamily];
 
+  const schedulePreviewUpdate = useCallback(() => {
+    if (previewRafRef.current !== null) return;
+    previewRafRef.current = requestAnimationFrame(() => {
+      previewRafRef.current = null;
+      setCurrentPath([...pathRef.current]);
+    });
+  }, []);
+
+  const scheduleEndPreviewUpdate = useCallback(() => {
+    if (endPreviewRafRef.current !== null) return;
+    endPreviewRafRef.current = requestAnimationFrame(() => {
+      endPreviewRafRef.current = null;
+      setDrawEnd(drawEndRef.current);
+    });
+  }, []);
+
+  const eraseAtPoint = useCallback((x: number, y: number) => {
+    const state = useCanvasStore.getState();
+    const elements = state.drawingElements;
+    const radius = Math.max(ERASER_HIT_STROKE / 2, strokeW * 1.5) / Math.max(0.2, zoom);
+    for (let i = elements.length - 1; i >= 0; i -= 1) {
+      if (isPointNearElement(elements[i], x, y, radius)) {
+        state.deleteDrawingElement(elements[i].id);
+        break;
+      }
+    }
+  }, [strokeW, zoom]);
+
+  useEffect(() => {
+    return () => {
+      if (previewRafRef.current !== null) {
+        cancelAnimationFrame(previewRafRef.current);
+      }
+      if (endPreviewRafRef.current !== null) {
+        cancelAnimationFrame(endPreviewRafRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    // Reset transient drawing buffers when switching tools to avoid stale states.
+    isDrawing.current = false;
+    drawToolRef.current = null;
+    activePointerIdRef.current = null;
+    pathRef.current = [];
+    drawStartRef.current = null;
+    drawEndRef.current = null;
+    setCurrentPath([]);
+    setDrawStart(null);
+    setDrawEnd(null);
+  }, [activeTool, readOnly]);
+
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!isActive) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const pos = toCanvasFromClient(e.clientX, e.clientY);
-    activePointerIdRef.current = e.pointerId;
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // Pointer capture may fail on unsupported environments.
+    const capturesPointer = activeTool === 'pencil' || activeTool === 'shape' || activeTool === 'line' || activeTool === 'arrow' || activeTool === 'eraser';
+    if (capturesPointer) {
+      activePointerIdRef.current = e.pointerId;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer capture may fail on unsupported environments.
+      }
     }
 
     if (activeTool === 'pencil') {
@@ -182,7 +323,9 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
       pathRef.current = [pos];
       setCurrentPath([pos]);
     } else if (activeTool === 'eraser') {
-      // handled via element click
+      drawToolRef.current = activeTool;
+      isDrawing.current = true;
+      eraseAtPoint(pos.x, pos.y);
     } else if (activeTool === 'text') {
       setTextPos(pos);
       setTextValue('');
@@ -204,11 +347,25 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
     if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return;
     const pos = toCanvasFromClient(e.clientX, e.clientY);
     if (drawToolRef.current === 'pencil') {
-      pathRef.current.push(pos);
-      setCurrentPath([...pathRef.current]);
+      const nativeEvent = e.nativeEvent as PointerEvent & { getCoalescedEvents?: () => PointerEvent[] };
+      const coalesced = typeof nativeEvent.getCoalescedEvents === 'function' ? nativeEvent.getCoalescedEvents() : [];
+      const sourcePoints = coalesced.length
+        ? coalesced.map((evt) => toCanvasFromClient(evt.clientX, evt.clientY))
+        : [pos];
+
+      const minDistance = MIN_FREEHAND_POINT_DISTANCE / Math.max(0.2, zoom);
+      for (const point of sourcePoints) {
+        const lastPoint = pathRef.current[pathRef.current.length - 1];
+        if (!lastPoint || Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) >= minDistance) {
+          pathRef.current.push(point);
+        }
+      }
+      schedulePreviewUpdate();
+    } else if (drawToolRef.current === 'eraser') {
+      eraseAtPoint(pos.x, pos.y);
     } else if (drawToolRef.current === 'shape' || drawToolRef.current === 'line' || drawToolRef.current === 'arrow') {
       drawEndRef.current = pos;
-      setDrawEnd(pos);
+      scheduleEndPreviewUpdate();
     }
     e.stopPropagation();
     e.preventDefault();
@@ -227,21 +384,40 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
     }
     activePointerIdRef.current = null;
 
+    if (e) {
+      const finalPos = toCanvasFromClient(e.clientX, e.clientY);
+      if (drawToolRef.current === 'pencil') {
+        const lastPoint = pathRef.current[pathRef.current.length - 1];
+        const minDistance = MIN_FREEHAND_POINT_DISTANCE / Math.max(0.2, zoom);
+        if (!lastPoint || Math.hypot(finalPos.x - lastPoint.x, finalPos.y - lastPoint.y) >= minDistance) {
+          pathRef.current.push(finalPos);
+        }
+      }
+      if (drawToolRef.current === 'shape' || drawToolRef.current === 'line' || drawToolRef.current === 'arrow') {
+        drawEndRef.current = finalPos;
+      }
+    }
+
     const path = pathRef.current;
     const start = drawStartRef.current;
     const end = drawEndRef.current;
     const drawTool = drawToolRef.current;
 
-    if (drawTool === 'pencil' && path.length > 1) {
-      addDrawingElement({ id: genId(), type: 'freehand', points: path, color: toolSettings.color, strokeWidth: strokeW });
+    if (drawTool === 'pencil' && path.length > 0) {
+      const normalizedPath = path.length === 1
+        ? [path[0], { x: path[0].x + 0.01, y: path[0].y + 0.01 }]
+        : path;
+      addDrawingElement({ id: genId(), type: 'freehand', points: normalizedPath, color: toolSettings.color, strokeWidth: strokeW });
       pathRef.current = [];
       setCurrentPath([]);
+    } else if (drawTool === 'eraser') {
+      // Continuous erasing already handled in pointer move.
     } else if (drawTool === 'shape' && start && end) {
       const x = Math.min(start.x, end.x);
       const y = Math.min(start.y, end.y);
       const w = Math.abs(end.x - start.x);
       const h = Math.abs(end.y - start.y);
-      if (w > 2 || h > 2) {
+      if (w > MIN_SHAPE_DISTANCE || h > MIN_SHAPE_DISTANCE) {
         addDrawingElement({ id: genId(), type: toolSettings.shapeType, x, y, w, h, color: toolSettings.color, strokeWidth: strokeW });
       }
       drawStartRef.current = null;
@@ -250,7 +426,7 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
       setDrawEnd(null);
     } else if ((drawTool === 'line' || drawTool === 'arrow') && start && end) {
       const dist = Math.hypot(end.x - start.x, end.y - start.y);
-      if (dist > 2) {
+      if (dist > MIN_SHAPE_DISTANCE) {
         addDrawingElement({ id: genId(), type: drawTool, x1: start.x, y1: start.y, x2: end.x, y2: end.y, color: toolSettings.color, strokeWidth: strokeW });
       }
       drawStartRef.current = null;
@@ -305,15 +481,15 @@ export function DrawingLayer({ readOnly, leftOffsetPercent = 0 }: { readOnly?: b
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onLostPointerCapture={handlePointerUp}
       >
         <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
           {drawingElements.map((el) => (
             <DrawingElementRenderer
               key={el.id}
               element={el}
-              onDelete={activeTool === 'eraser' && isActive ? deleteDrawingElement : undefined}
+              onDelete={undefined}
             />
           ))}
 
