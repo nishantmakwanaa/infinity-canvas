@@ -703,7 +703,7 @@ const Index = () => {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (effectiveCanvasLoading || !isEditorMode) return;
+      if (effectiveCanvasLoading) return;
 
       if (!e.repeat && e.ctrlKey && e.altKey && !e.metaKey && !e.shiftKey && (e.code === 'AltLeft' || e.code === 'AltRight' || e.code === 'ControlLeft' || e.code === 'ControlRight')) {
         e.preventDefault();
@@ -723,6 +723,15 @@ const Index = () => {
       const hasCtrl = e.ctrlKey && !e.altKey && !e.metaKey;
       const hasCtrlOnly = hasCtrl && !e.shiftKey;
       const hasCtrlShiftOnly = hasCtrl && e.shiftKey;
+
+      if (hasCtrlShiftOnly && code === 'Digit7') { e.preventDefault(); setThemePreference('light'); return; }
+      if (hasCtrlShiftOnly && code === 'Digit8') { e.preventDefault(); setThemePreference('dark'); return; }
+      if (hasCtrlShiftOnly && code === 'Digit9') { e.preventDefault(); setThemePreference('auto'); return; }
+
+      if (hasOnlySingleChar && code === 'KeyS') { e.preventDefault(); store.setActiveTool('select'); return; }
+      if (hasOnlySingleChar && code === 'KeyH') { e.preventDefault(); store.setActiveTool('hand'); return; }
+
+      if (!canMutateCanvas) return;
 
       if (hasCtrlOnly && code === 'KeyZ') {
         e.preventDefault();
@@ -784,22 +793,16 @@ const Index = () => {
       if (hasOnlySingleChar && code === 'KeyD') { e.preventDefault(); store.addBlock('todo'); return; }
       if (hasOnlySingleChar && code === 'KeyM') { e.preventDefault(); store.addBlock('media'); return; }
 
-      if (hasOnlySingleChar && code === 'KeyS') { e.preventDefault(); store.setActiveTool('select'); return; }
-      if (hasOnlySingleChar && code === 'KeyH') { e.preventDefault(); store.setActiveTool('hand'); return; }
       if (hasOnlySingleChar && code === 'KeyP') { e.preventDefault(); store.setActiveTool('pencil'); return; }
       if (hasOnlySingleChar && code === 'KeyE') { e.preventDefault(); store.setActiveTool('eraser'); return; }
       if (hasOnlySingleChar && code === 'KeyT') { e.preventDefault(); store.setActiveTool('text'); return; }
       if (hasOnlySingleChar && code === 'KeyG') { e.preventDefault(); store.setActiveTool('shape'); return; }
       if (hasOnlySingleChar && code === 'KeyL') { e.preventDefault(); store.setActiveTool('line'); return; }
       if (hasOnlySingleChar && code === 'KeyA') { e.preventDefault(); store.setActiveTool('arrow'); return; }
-
-      if (hasCtrlShiftOnly && code === 'Digit7') { e.preventDefault(); setThemePreference('light'); return; }
-      if (hasCtrlShiftOnly && code === 'Digit8') { e.preventDefault(); setThemePreference('dark'); return; }
-      if (hasCtrlShiftOnly && code === 'Digit9') { e.preventDefault(); setThemePreference('auto'); return; }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [effectiveCanvasLoading, isEditorMode]);
+  }, [canMutateCanvas, effectiveCanvasLoading]);
 
   useEffect(() => {
     return startDroppedFrameMonitor();

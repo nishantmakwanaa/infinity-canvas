@@ -62,6 +62,39 @@ function isMediaUrl(input: string) {
   if (!candidate) return false;
   if (/^(blob:|data:|file:)/i.test(candidate)) return true;
 
+  try {
+    const parsed = new URL(candidate);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+
+    const isYouTubeVideo =
+      (host.includes('youtube.com') && (
+        (path === '/watch' && Boolean(parsed.searchParams.get('v')))
+        || path.startsWith('/shorts/')
+        || path.startsWith('/live/')
+        || path.startsWith('/embed/')
+      ))
+      || (host.includes('youtu.be') && path.split('/').filter(Boolean).length > 0);
+
+    const isInstagramMedia =
+      host.includes('instagram.com')
+      && (path.includes('/reel/') || path.includes('/p/') || path.includes('/tv/'));
+
+    const isVimeoMedia =
+      host.includes('vimeo.com')
+      && (/\/\d{6,}/.test(path) || path.startsWith('/video/'));
+
+    const isXTwitterStatus =
+      (host.includes('x.com') || host.includes('twitter.com'))
+      && /\/status\/\d+/.test(path);
+
+    if (isYouTubeVideo || isInstagramMedia || isVimeoMedia || isXTwitterStatus) {
+      return true;
+    }
+  } catch {
+    // Fall back to extension/keyword checks below.
+  }
+
   const ext = extensionFromUrl(candidate);
   if (MEDIA_IMAGE_EXTENSIONS.includes(ext) || MEDIA_VIDEO_EXTENSIONS.includes(ext) || MEDIA_AUDIO_EXTENSIONS.includes(ext)) {
     return true;

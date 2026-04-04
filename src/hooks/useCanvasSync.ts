@@ -564,6 +564,33 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const ensureSingleBootstrapCanvas = useCallback(async (userId: string) => {
     if (!userId) return null;
 
+    const bootstrapLockKey = `cnvs_bootstrap_canvas_lock_v1_${userId}`;
+    const nowMs = Date.now();
+    let lockHeldByAnother = false;
+    try {
+      const existingRaw = sessionStorage.getItem(bootstrapLockKey);
+      const existingAtMs = existingRaw ? Number(existingRaw) : 0;
+      if (Number.isFinite(existingAtMs) && existingAtMs > 0 && nowMs - existingAtMs < 12_000) {
+        lockHeldByAnother = true;
+      }
+      if (!lockHeldByAnother) {
+        sessionStorage.setItem(bootstrapLockKey, String(nowMs));
+      }
+    } catch {
+      // Ignore storage access issues and continue with in-memory guard only.
+    }
+
+    if (lockHeldByAnother) {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const existingOwned = await refreshCanvases(userId);
+        if (Array.isArray(existingOwned) && existingOwned.length) {
+          return existingOwned[0];
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 160));
+      }
+      return null;
+    }
+
     const inFlight = bootstrapCreatePromiseByUserRef.current[userId];
     if (inFlight) {
       return await inFlight;
@@ -599,11 +626,6 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         return ownedAfterCreateAttempt[0];
       }
 
-      const fallbackCreated = await insertCanvasWithRetry(userId, defaultName, undefined, true);
-      if (fallbackCreated?.id) {
-        return fallbackCreated as CanvasMeta;
-      }
-
       const finalOwned = await refreshCanvases(userId);
       if (Array.isArray(finalOwned) && finalOwned.length) {
         return finalOwned[0];
@@ -617,6 +639,11 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return await promise;
     } finally {
       delete bootstrapCreatePromiseByUserRef.current[userId];
+      try {
+        sessionStorage.removeItem(bootstrapLockKey);
+      } catch {
+        // Ignore storage access errors.
+      }
     }
   }, [insertCanvasWithRetry, refreshCanvases]);
 
