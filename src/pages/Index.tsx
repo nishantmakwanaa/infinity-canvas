@@ -4,7 +4,6 @@ import { AppHeader } from '@/components/canvas/AppHeader';
 import { ToolSettingsPanel } from '@/components/canvas/ToolSettingsPanel';
 import { CanvasSidebar } from '@/components/canvas/CanvasSidebar';
 import { AuthGateDialog } from '@/components/canvas/AuthGateDialog';
-import { setThemePreference, useThemeTime } from '@/hooks/useThemeTime';
 import { useAuth } from '@/hooks/useAuth';
 import { useCanvasSync } from '@/hooks/useCanvasSync';
 import { Profiler, useCallback, useEffect, useMemo, useRef, useState, type ProfilerOnRenderCallback } from 'react';
@@ -47,7 +46,6 @@ function clampDesktopSidebarWidth(value: number) {
 }
 
 const Index = () => {
-  useThemeTime();
   const { user, session, loading, signInWithGoogle, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -196,7 +194,10 @@ const Index = () => {
   const useSocketTransport = preferSocketTransport && socketConnected;
   const collaborators = useSocketTransport ? socketCollaborators : realtimeCollaborators;
   const collaborationConnected = useSocketTransport ? socketConnected : realtimeConnected;
-  const toggleUserVisibility = useSocketTransport ? socketToggleUserVisibility : realtimeToggleUserVisibility;
+  const toggleUserVisibility = useCallback((userId: string) => {
+    socketToggleUserVisibility(userId);
+    realtimeToggleUserVisibility(userId);
+  }, [realtimeToggleUserVisibility, socketToggleUserVisibility]);
   const editorSlotGranted = useSocketTransport ? socketEditorSlotGranted : realtimeEditorSlotGranted;
   const editorSlotActiveCount = useSocketTransport ? socketEditorSlotActiveCount : realtimeEditorSlotActiveCount;
   const editorSlotLimitCount = useSocketTransport ? socketEditorSlotLimitCount : realtimeEditorSlotLimitCount;
@@ -518,14 +519,10 @@ const Index = () => {
         const isShareRoute = Boolean((row as any)?.is_share);
         const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
         const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
+        const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
         if (isShareRoute && session?.user?.id && row?.canvas_id) {
           const requestedAccess = (shareAccess === 'editor' || isShareEditLink) ? 'editor' : 'viewer';
-          markJoinedCanvasAccess(row.canvas_id, requestedAccess);
-          try {
-            await syncCanvasPermissionFromShare(row.canvas_id, requestedAccess);
-          } catch {
-            // Best-effort sync only.
-          }
+          markJoinedCanvasAccess(row.canvas_id, requestedAccess, { canvasName: resolvedName });
           if (cancelled) return;
         }
 
@@ -541,7 +538,6 @@ const Index = () => {
           ? Boolean(isShareEditLink && session?.user?.id && (Boolean(row.can_edit) || shareAccess === 'editor'))
           : Boolean(row.can_edit);
         setRouteCanvasId(row.canvas_id);
-        const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
         setRouteCanvasName(resolvedName);
 
         if (canEdit) {
@@ -724,24 +720,28 @@ const Index = () => {
       const hasCtrlOnly = hasCtrl && !e.shiftKey;
       const hasCtrlShiftOnly = hasCtrl && e.shiftKey;
 
-      if (hasCtrlShiftOnly && code === 'Digit7') { e.preventDefault(); setThemePreference('light'); return; }
-      if (hasCtrlShiftOnly && code === 'Digit8') { e.preventDefault(); setThemePreference('dark'); return; }
-      if (hasCtrlShiftOnly && code === 'Digit9') { e.preventDefault(); setThemePreference('auto'); return; }
+      const notifyShortcut = (message: string, combo: string) => {
+        toast.success(message, { description: `Shortcut: ${combo}` });
+      };
 
-      if (hasOnlySingleChar && code === 'KeyS') { e.preventDefault(); store.setActiveTool('select'); return; }
-      if (hasOnlySingleChar && code === 'KeyH') { e.preventDefault(); store.setActiveTool('hand'); return; }
+      if (hasOnlySingleChar && code === 'KeyS') { e.preventDefault(); store.setActiveTool('select'); notifyShortcut('Tool changed to Select', 'S'); return; }
+      if (hasOnlySingleChar && code === 'KeyH') { e.preventDefault(); store.setActiveTool('hand'); notifyShortcut('Tool changed to Hand', 'H'); return; }
 
       if (!canMutateCanvas) return;
 
       if (hasCtrlOnly && code === 'KeyZ') {
         e.preventDefault();
-        handleUndo();
+        if (handleUndo()) {
+          notifyShortcut('Undid last action', 'Ctrl + Z');
+        }
         return;
       }
 
       if (hasCtrlOnly && code === 'KeyY') {
         e.preventDefault();
-        handleRedo();
+        if (handleRedo()) {
+          notifyShortcut('Redid last action', 'Ctrl + Y');
+        }
         return;
       }
 
@@ -767,38 +767,42 @@ const Index = () => {
       if (hasCtrlOnly && code === 'KeyB') {
         e.preventDefault();
         toggleTextFormat('textBold');
+        notifyShortcut('Toggled bold', 'Ctrl + B');
         return;
       }
 
       if (hasCtrlOnly && code === 'KeyI') {
         e.preventDefault();
         toggleTextFormat('textItalic');
+        notifyShortcut('Toggled italic', 'Ctrl + I');
         return;
       }
 
       if (hasCtrlOnly && code === 'KeyU') {
         e.preventDefault();
         toggleTextFormat('textUnderline');
+        notifyShortcut('Toggled underline', 'Ctrl + U');
         return;
       }
 
       if (hasCtrlShiftOnly && code === 'KeyH') {
         e.preventDefault();
         toggleTextFormat('textHighlight');
+        notifyShortcut('Toggled highlight', 'Ctrl + Shift + H');
         return;
       }
 
-      if (hasOnlySingleChar && code === 'KeyN') { e.preventDefault(); store.addBlock('note'); return; }
-      if (hasOnlySingleChar && code === 'KeyK') { e.preventDefault(); store.addBlock('link'); return; }
-      if (hasOnlySingleChar && code === 'KeyD') { e.preventDefault(); store.addBlock('todo'); return; }
-      if (hasOnlySingleChar && code === 'KeyM') { e.preventDefault(); store.addBlock('media'); return; }
+      if (hasOnlySingleChar && code === 'KeyN') { e.preventDefault(); store.addBlock('note'); notifyShortcut('Added note block', 'N'); return; }
+      if (hasOnlySingleChar && code === 'KeyK') { e.preventDefault(); store.addBlock('link'); notifyShortcut('Added link block', 'K'); return; }
+      if (hasOnlySingleChar && code === 'KeyD') { e.preventDefault(); store.addBlock('todo'); notifyShortcut('Added todo block', 'D'); return; }
+      if (hasOnlySingleChar && code === 'KeyM') { e.preventDefault(); store.addBlock('media'); notifyShortcut('Added media block', 'M'); return; }
 
-      if (hasOnlySingleChar && code === 'KeyP') { e.preventDefault(); store.setActiveTool('pencil'); return; }
-      if (hasOnlySingleChar && code === 'KeyE') { e.preventDefault(); store.setActiveTool('eraser'); return; }
-      if (hasOnlySingleChar && code === 'KeyT') { e.preventDefault(); store.setActiveTool('text'); return; }
-      if (hasOnlySingleChar && code === 'KeyG') { e.preventDefault(); store.setActiveTool('shape'); return; }
-      if (hasOnlySingleChar && code === 'KeyL') { e.preventDefault(); store.setActiveTool('line'); return; }
-      if (hasOnlySingleChar && code === 'KeyA') { e.preventDefault(); store.setActiveTool('arrow'); return; }
+      if (hasOnlySingleChar && code === 'KeyP') { e.preventDefault(); store.setActiveTool('pencil'); notifyShortcut('Tool changed to Pencil', 'P'); return; }
+      if (hasOnlySingleChar && code === 'KeyE') { e.preventDefault(); store.setActiveTool('eraser'); notifyShortcut('Tool changed to Eraser', 'E'); return; }
+      if (hasOnlySingleChar && code === 'KeyT') { e.preventDefault(); store.setActiveTool('text'); notifyShortcut('Tool changed to Text', 'T'); return; }
+      if (hasOnlySingleChar && code === 'KeyG') { e.preventDefault(); store.setActiveTool('shape'); notifyShortcut('Tool changed to Shape', 'G'); return; }
+      if (hasOnlySingleChar && code === 'KeyL') { e.preventDefault(); store.setActiveTool('line'); notifyShortcut('Tool changed to Line', 'L'); return; }
+      if (hasOnlySingleChar && code === 'KeyA') { e.preventDefault(); store.setActiveTool('arrow'); notifyShortcut('Tool changed to Arrow', 'A'); return; }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
@@ -869,7 +873,7 @@ const Index = () => {
         />
       )}
 
-      {isSidebarOpen && canMutateCanvas && (
+      {isLoggedIn && isSidebarOpen && canMutateCanvas && (
         <>
           {isMobile && (
             <div
@@ -930,12 +934,13 @@ const Index = () => {
             className="fixed right-0 z-50 px-1 py-2 bg-transparent border border-border border-r-0 select-none pointer-events-none"
             style={{ bottom: 'calc(1rem + 44px)' }}
           >
-            <span className="block text-[8px] font-mono font-bold text-foreground [writing-mode:vertical-rl] tracking-wider">CNVS © 2026 NISHANT MAKWANA</span>
+            <span className="block text-[8px] font-mono text-muted-foreground leading-tight">MADE BY</span>
+            <span className="block text-[10px] font-mono font-bold text-foreground leading-tight">NISHANT</span>
           </div>
         ) : (
           <div className="fixed bottom-4 right-4 z-50 px-3 py-1.5 bg-transparent border border-border select-none pointer-events-none">
-            <span className="text-[9px] font-mono text-muted-foreground block leading-tight">CNVS</span>
-            <span className="text-[10px] font-mono font-bold text-foreground block leading-tight">© 2026 Nishant Makwana</span>
+            <span className="text-[9px] font-mono text-muted-foreground block leading-tight">MADE BY</span>
+            <span className="text-[10px] font-mono font-bold text-foreground block leading-tight">NISHANT</span>
           </div>
         )
       )}

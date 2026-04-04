@@ -141,6 +141,9 @@ export function useAuth() {
     await supabase.auth.signOut();
     setUser(null);
     setSession(null);
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.location.replace('/');
+    }
   };
 
   return { user, session, loading, signInWithGoogle, signOut };

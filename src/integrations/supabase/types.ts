@@ -246,6 +246,13 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: { canvas_id: string | null }[]
       }
+      leave_joined_canvases: {
+        Args: { p_canvas_ids: string[] }
+        Returns: {
+          canvas_id: string
+          left_ok: boolean
+        }[]
+      }
       list_joined_canvases: {
         Args: Record<PropertyKey, never>
         Returns: {

@@ -3,6 +3,10 @@ import { useEffect } from 'react';
 export type ThemePreference = 'auto' | 'light' | 'dark';
 const THEME_PREF_KEY = 'cnvs_theme_preference_v1';
 
+interface UseThemeTimeOptions {
+  forceAutoOnOpen?: boolean;
+}
+
 function applyTheme(pref: ThemePreference) {
   if (pref === 'light') {
     document.documentElement.classList.remove('dark');
@@ -27,8 +31,12 @@ export function setThemePreference(pref: ThemePreference) {
   applyTheme(pref);
 }
 
-export function useThemeTime() {
+export function useThemeTime(options?: UseThemeTimeOptions) {
   useEffect(() => {
+    if (options?.forceAutoOnOpen) {
+      setThemePreference('auto');
+    }
+
     const update = () => {
       applyTheme(getThemePreference());
     };

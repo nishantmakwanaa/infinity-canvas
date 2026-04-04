@@ -1249,3 +1249,71 @@ $$;
 
 revoke all on function public.resolve_user_canvas(text, text) from public;
 grant execute on function public.resolve_user_canvas(text, text) to anon, authenticated;
+
+create or replace function public.leave_joined_canvases(
+  p_canvas_ids uuid[]
+)
+returns table (
+  canvas_id uuid,
+  left_ok boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_canvas_id uuid;
+  v_owner_id uuid;
+  v_deleted boolean;
+begin
+  if v_user_id is null then
+    return;
+  end if;
+
+  if p_canvas_ids is null or coalesce(array_length(p_canvas_ids, 1), 0) = 0 then
+    return;
+  end if;
+
+  for v_canvas_id in
+    select distinct unnest(p_canvas_ids)
+  loop
+    if v_canvas_id is null then
+      continue;
+    end if;
+
+    select c.user_id
+    into v_owner_id
+    from public.canvases c
+    where c.id = v_canvas_id
+    limit 1;
+
+    if v_owner_id is null or v_owner_id = v_user_id then
+      canvas_id := v_canvas_id;
+      left_ok := false;
+      return next;
+      continue;
+    end if;
+
+    delete from public.canvas_permissions cp
+    where cp.canvas_id = v_canvas_id
+      and cp.user_id = v_user_id
+      and cp.role in ('viewer', 'editor');
+
+    v_deleted := found;
+
+    if v_deleted then
+      delete from public.canvas_editor_sessions ces
+      where ces.canvas_id = v_canvas_id
+        and ces.user_id = v_user_id;
+    end if;
+
+    canvas_id := v_canvas_id;
+    left_ok := v_deleted;
+    return next;
+  end loop;
+end;
+$$;
+
+revoke all on function public.leave_joined_canvases(uuid[]) from public;
+grant execute on function public.leave_joined_canvases(uuid[]) to authenticated;

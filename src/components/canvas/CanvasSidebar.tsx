@@ -108,7 +108,26 @@ export function CanvasSidebar({
     [joinedCanvasAccessByCanvasId, sharedCanvases]
   );
   const joinedEditCanvases = useMemo(
-    () => sharedCanvases.filter((canvas) => joinedCanvasAccessByCanvasId[canvas.id] === 'editor'),
+    () => {
+      const byId = new Map<string, CanvasMeta>();
+
+      sharedCanvases.forEach((canvas) => {
+        if (joinedCanvasAccessByCanvasId[canvas.id] === 'editor') {
+          byId.set(canvas.id, canvas);
+        }
+      });
+
+      Object.entries(joinedCanvasAccessByCanvasId).forEach(([canvasId, role]) => {
+        if (role !== 'editor' || byId.has(canvasId)) return;
+        byId.set(canvasId, {
+          id: canvasId,
+          name: 'shared-canvas/page-1.cnvs',
+          updated_at: '1970-01-01T00:00:00.000Z',
+        });
+      });
+
+      return Array.from(byId.values());
+    },
     [joinedCanvasAccessByCanvasId, sharedCanvases]
   );
   const ownedPrivateCanvases = useMemo(
@@ -130,6 +149,22 @@ export function CanvasSidebar({
   }, [selectedPages]);
 
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedJoinedEditIds = useMemo(
+    () => selectedIds.filter((id) => joinedCanvasAccessByCanvasId[id] === 'editor'),
+    [joinedCanvasAccessByCanvasId, selectedIds]
+  );
+  const selectedOwnedIds = useMemo(
+    () => selectedIds.filter((id) => joinedCanvasAccessByCanvasId[id] !== 'editor'),
+    [joinedCanvasAccessByCanvasId, selectedIds]
+  );
+  const confirmDeleteTitle = selectedJoinedEditIds.length > 0 && selectedOwnedIds.length === 0
+    ? 'Leave selected collaborative canvases?'
+    : 'Delete selected pages?';
+  const confirmDeleteDescription = selectedJoinedEditIds.length > 0 && selectedOwnedIds.length === 0
+    ? `You will leave ${selectedJoinedEditIds.length} collaborative canvas${selectedJoinedEditIds.length > 1 ? 'es' : ''}.`
+    : selectedJoinedEditIds.length > 0
+      ? `Owned pages will be deleted and you will leave ${selectedJoinedEditIds.length} collaborative canvas${selectedJoinedEditIds.length > 1 ? 'es' : ''}.`
+      : `This action cannot be undone. ${selectedIds.length} page${selectedIds.length > 1 ? 's' : ''} will be removed.`;
 
   useEffect(() => {
     setAvatarLoadFailed(false);
@@ -218,13 +253,13 @@ export function CanvasSidebar({
           <Pencil size={13} />
         </button>
       </div>
-      <div className="p-2 space-y-1 overflow-auto no-scrollbar h-[calc(100%-56px-58px)]">
+      <div className="p-2 space-y-1 overflow-auto no-scrollbar h-[calc(100%-56px-58px)] flex flex-col">
         {!groupedOwnedAll.length && !groupedJoinedView.length && !groupedJoinedEdit.length && (
           <div className="text-[11px] font-mono text-muted-foreground px-1 py-2">No canvases yet</div>
         )}
 
         {groupedOwnedSharedView.length > 0 && (
-          <>
+          <div className="order-3">
             <div className="px-1 pt-1 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Shared by me (view only)</div>
             {groupedOwnedSharedView.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
@@ -280,11 +315,11 @@ export function CanvasSidebar({
                 </div>
               );
             })}
-          </>
+          </div>
         )}
 
         {groupedOwnedSharedEdit.length > 0 && (
-          <>
+          <div className="order-2">
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Shared by me (edit)</div>
             {groupedOwnedSharedEdit.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
@@ -340,11 +375,11 @@ export function CanvasSidebar({
                 </div>
               );
             })}
-          </>
+          </div>
         )}
 
         {groupedJoinedView.length > 0 && (
-          <>
+          <div className="order-5">
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Joined (view only)</div>
             {groupedJoinedView.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
@@ -367,14 +402,17 @@ export function CanvasSidebar({
                 </div>
               );
             })}
-          </>
+          </div>
         )}
 
         {groupedJoinedEdit.length > 0 && (
-          <>
+          <div className="order-1">
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Joined (edit)</div>
             {groupedJoinedEdit.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
+              const groupPageIds = group.pages.map((page) => page.id);
+              const selectedPagesInGroup = group.pages.filter((page) => Boolean(selectedPages[page.id]));
+              const areAllPagesSelected = group.pages.length > 0 && selectedPagesInGroup.length === group.pages.length;
               const defaultPageId = group.pages[0]?.id;
               return (
                 <div key={`joined-edit-${group.groupKey}`} className="border border-border bg-card/70">
@@ -383,10 +421,19 @@ export function CanvasSidebar({
                       isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
                     }`}
                     onClick={() => {
+                      if (deleteMode) {
+                        toggleSelectedGroupPages(groupPageIds);
+                        return;
+                      }
                       if (defaultPageId) onSelectCanvas(defaultPageId);
                     }}
                   >
                     <div className="flex items-center gap-2">
+                      {deleteMode && (
+                        <div className={`w-4 h-4 border flex items-center justify-center ${areAllPagesSelected ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
+                          {areAllPagesSelected ? <Check size={12} /> : null}
+                        </div>
+                      )}
                       <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
                       <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
                     </div>
@@ -394,68 +441,70 @@ export function CanvasSidebar({
                 </div>
               );
             })}
-          </>
+          </div>
         )}
 
-        {groupedOwnedPrivate.length > 0 && (
-          <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Owned (not shared)</div>
-        )}
+        <div className="order-4">
+          {groupedOwnedPrivate.length > 0 && (
+            <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Owned (not shared)</div>
+          )}
 
-        {groupedOwnedPrivate.map((group) => {
-          const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
-          const groupPageIds = group.pages.map((page) => page.id);
-          const selectedPagesInGroup = group.pages.filter((page) => Boolean(selectedPages[page.id]));
-          const areAllPagesSelected = group.pages.length > 0 && selectedPagesInGroup.length === group.pages.length;
-          const defaultPageId = group.pages[0]?.id;
+          {groupedOwnedPrivate.map((group) => {
+            const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
+            const groupPageIds = group.pages.map((page) => page.id);
+            const selectedPagesInGroup = group.pages.filter((page) => Boolean(selectedPages[page.id]));
+            const areAllPagesSelected = group.pages.length > 0 && selectedPagesInGroup.length === group.pages.length;
+            const defaultPageId = group.pages[0]?.id;
 
-          return (
-            <div key={group.groupKey} className="border border-border bg-card">
-              <button
-                className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
-                  isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
-                }`}
-                onClick={() => {
-                  if (deleteMode) {
-                    toggleSelectedGroupPages(groupPageIds);
-                    return;
-                  }
-                  if (defaultPageId) onSelectCanvas(defaultPageId);
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  {deleteMode && (
-                    <div className={`w-4 h-4 border flex items-center justify-center ${areAllPagesSelected ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
-                      {areAllPagesSelected ? <Check size={12} /> : null}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
-                  <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
-                </div>
-              </button>
+            return (
+              <div key={group.groupKey} className="border border-border bg-card">
+                <button
+                  className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
+                    isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
+                  }`}
+                  onClick={() => {
+                    if (deleteMode) {
+                      toggleSelectedGroupPages(groupPageIds);
+                      return;
+                    }
+                    if (defaultPageId) onSelectCanvas(defaultPageId);
+                  }}
+                >
+                  <div className="flex items-center gap-2">
+                    {deleteMode && (
+                      <div className={`w-4 h-4 border flex items-center justify-center ${areAllPagesSelected ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
+                        {areAllPagesSelected ? <Check size={12} /> : null}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1 truncate">{group.canvasLabel}</div>
+                    <div className="text-[10px] text-muted-foreground">{group.pages.length}</div>
+                  </div>
+                </button>
 
-              {deleteMode && (
-                <div className="border-t border-border bg-card/60">
-                  {group.pages.map((page) => {
-                    const isSelectedPage = Boolean(selectedPages[page.id]);
-                    const isCurrentPage = page.id === currentCanvasId;
-                    return (
-                      <button
-                        key={page.id}
-                        className={`w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors inline-flex items-center gap-2 ${isCurrentPage ? 'text-foreground' : 'text-muted-foreground'} hover:bg-accent`}
-                        onClick={() => toggleSelectedPage(page.id)}
-                      >
-                        <div className={`w-3.5 h-3.5 border flex items-center justify-center ${isSelectedPage ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
-                          {isSelectedPage ? <Check size={10} /> : null}
-                        </div>
-                        <span className="truncate">{page.pageLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                {deleteMode && (
+                  <div className="border-t border-border bg-card/60">
+                    {group.pages.map((page) => {
+                      const isSelectedPage = Boolean(selectedPages[page.id]);
+                      const isCurrentPage = page.id === currentCanvasId;
+                      return (
+                        <button
+                          key={page.id}
+                          className={`w-full text-left px-3 py-1.5 text-[11px] font-mono transition-colors inline-flex items-center gap-2 ${isCurrentPage ? 'text-foreground' : 'text-muted-foreground'} hover:bg-accent`}
+                          onClick={() => toggleSelectedPage(page.id)}
+                        >
+                          <div className={`w-3.5 h-3.5 border flex items-center justify-center ${isSelectedPage ? 'bg-foreground text-background border-foreground' : 'border-border'}`}>
+                            {isSelectedPage ? <Check size={10} /> : null}
+                          </div>
+                          <span className="truncate">{page.pageLabel}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Bottom actions */}
@@ -540,9 +589,9 @@ export function CanvasSidebar({
       <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <DialogContent className="max-w-sm" data-no-translate="true">
           <DialogHeader>
-            <DialogTitle className="text-sm font-mono">Delete selected pages?</DialogTitle>
+            <DialogTitle className="text-sm font-mono">{confirmDeleteTitle}</DialogTitle>
             <DialogDescription className="text-xs font-mono">
-              This action cannot be undone. {selectedIds.length} page{selectedIds.length > 1 ? 's' : ''} will be removed.
+              {confirmDeleteDescription}
             </DialogDescription>
           </DialogHeader>
 
@@ -553,6 +602,15 @@ export function CanvasSidebar({
                 .map((page) => (
                   <div key={page.id} className="px-2 py-1.5 text-xs font-mono border-b border-border last:border-b-0">
                     {group.canvasLabel} / {page.pageLabel}
+                  </div>
+                ))
+            )}
+            {groupedJoinedEdit.map((group) =>
+              group.pages
+                .filter((page) => selectedIdSet.has(page.id))
+                .map((page) => (
+                  <div key={page.id} className="px-2 py-1.5 text-xs font-mono border-b border-border last:border-b-0">
+                    {group.canvasLabel} / {page.pageLabel} (joined edit)
                   </div>
                 ))
             )}
@@ -567,7 +625,7 @@ export function CanvasSidebar({
                 exitDeleteMode();
               }}
             >
-              Confirm delete
+              Confirm
             </button>
             <button
               className="h-8 w-8 border border-border inline-flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent"

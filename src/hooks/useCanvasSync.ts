@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useCanvasStore, CanvasBlock, DrawingElement } from '@/store/canvasStore';
 import type { Session } from '@supabase/supabase-js';
-import { createDefaultCanvasRouteName, parseCanvasRouteName, toCanvasRouteName } from '@/lib/canvasNaming';
+import { createDefaultCanvasRouteName, nextPageSlug, parseCanvasRouteName, toCanvasRouteName } from '@/lib/canvasNaming';
 import { recordPerfMetric } from '@/lib/perfTelemetry';
 import { syncCanvasPermissionFromShare } from '@/lib/sharePermissionSync';
 import { toast } from 'sonner';
@@ -295,10 +295,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }>,
     mutateNameOnConflict = true
   ) => {
-    const rpc = await supabase.rpc('create_canvas_with_unique_name', {
+    const rpc: any = await supabase.rpc('create_canvas_with_unique_name', {
       p_name: baseName,
-      p_blocks: payload?.blocks || [],
-      p_drawings: payload?.drawings || [],
+      p_blocks: (payload?.blocks || []) as any,
+      p_drawings: (payload?.drawings || []) as any,
       p_pan_x: payload?.pan_x ?? 0,
       p_pan_y: payload?.pan_y ?? 0,
       p_zoom: payload?.zoom ?? 1,
@@ -482,6 +482,34 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         // Keep current joined list on transient failures; avoid wiping sidebar sections.
         return sharedCanvasesRef.current;
       }
+
+      const existingJoinedIds = new Set(rows.map((row) => String(row?.id || '').trim()).filter(Boolean));
+      const missingLocalJoinedIds = localJoinedIds.filter((id) => !existingJoinedIds.has(id));
+      if (missingLocalJoinedIds.length) {
+        const { data: missingLocalRows, error: missingLocalErr } = await supabase
+          .from('canvases')
+          .select('id,name,updated_at,user_id')
+          .in('id', missingLocalJoinedIds);
+
+        if (!missingLocalErr && Array.isArray(missingLocalRows) && missingLocalRows.length) {
+          const additions: JoinedRow[] = missingLocalRows
+            .filter((c) => c.user_id !== userId)
+            .map((c) => ({
+              id: c.id,
+              name: c.name,
+              updated_at: c.updated_at,
+              role: localJoinedAccess[c.id] === 'editor' ? 'editor' : 'viewer',
+            }));
+
+          if (additions.length) {
+            rows = [...rows, ...additions];
+          }
+        } else if (isPermissionDeniedError(missingLocalErr)) {
+          warnPermissionIssue();
+        } else if (isPostgrestResourceMissingError(missingLocalErr)) {
+          warnSchemaNotDeployed();
+        }
+      }
     }
 
     const nextJoined: JoinedCanvasAccessMap = {};
@@ -489,12 +517,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       const canvasId = String(row?.id || '').trim();
       if (!canvasId) return;
       const role = String(row?.role || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
-      if (usedLocalFallbackOnly) {
-        const localRole = localJoinedAccess[canvasId];
-        nextJoined[canvasId] = localRole === 'editor' ? 'editor' : role;
-      } else {
-        nextJoined[canvasId] = role;
-      }
+      const localRole = localJoinedAccess[canvasId];
+      // Keep strongest known access so edit links do not get downgraded by stale role payloads.
+      nextJoined[canvasId] = (localRole === 'editor' || role === 'editor') ? 'editor' : 'viewer';
     });
 
     const mapped = rows.map((row) => ({
@@ -503,10 +528,27 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       updated_at: row.updated_at,
     })) as CanvasMeta[];
 
+    const mappedById = new Map(mapped.map((canvas) => [canvas.id, canvas]));
+    const missingMappedIds = localJoinedIds.filter((id) => !mappedById.has(id));
+    missingMappedIds.forEach((id) => {
+      const existing = sharedCanvasesRef.current.find((canvas) => canvas.id === id);
+      mappedById.set(id, existing || {
+        id,
+        name: 'shared-canvas/page-1.cnvs',
+        updated_at: new Date().toISOString(),
+      });
+      if (!nextJoined[id]) {
+        nextJoined[id] = localJoinedAccess[id] === 'editor' ? 'editor' : 'viewer';
+      }
+    });
+
+    const finalMapped = Array.from(mappedById.values())
+      .sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+
     setJoinedCanvasAccessByCanvasId(nextJoined);
     writeJoinedCanvasAccess(userId, nextJoined);
-    setSharedCanvases(mapped);
-    return mapped;
+    setSharedCanvases(finalMapped);
+    return finalMapped;
   }, [warnPermissionIssue, warnSchemaNotDeployed]);
 
   const refreshShareAccessByCanvasIds = useCallback(async (canvasIds: string[]) => {
@@ -678,7 +720,47 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
   }, [refreshAllCanvasCollections]);
 
-  const markJoinedCanvasAccess = useCallback((canvasId: string, access: CanvasAccessLevel) => {
+  const ensureJoinedAccessPersisted = useCallback(async (
+    userId: string,
+    canvasId: string,
+    access: CanvasAccessLevel,
+  ) => {
+    const hasRequiredPermission = async () => {
+      const { data, error } = await supabase
+        .from('canvas_permissions')
+        .select('role')
+        .eq('canvas_id', canvasId)
+        .eq('user_id', userId)
+        .limit(1)
+        .maybeSingle();
+
+      if (error || !data) return false;
+      const role = String((data as any).role || '').toLowerCase();
+      if (access === 'editor') {
+        return role === 'owner' || role === 'editor';
+      }
+      return role === 'owner' || role === 'editor' || role === 'viewer';
+    };
+
+    if (await hasRequiredPermission()) {
+      return true;
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await syncCanvasPermissionFromShare(canvasId, access);
+      if (await hasRequiredPermission()) {
+        return true;
+      }
+    }
+
+    return false;
+  }, []);
+
+  const markJoinedCanvasAccess = useCallback((
+    canvasId: string,
+    access: CanvasAccessLevel,
+    options?: { canvasName?: string; updatedAt?: string }
+  ) => {
     const userId = session?.user?.id;
     if (!userId || !canvasId) return;
     const requestedAccess: CanvasAccessLevel = access === 'editor' ? 'editor' : 'viewer';
@@ -694,8 +776,30 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return next;
     });
 
-    void syncCanvasPermissionFromShare(canvasId, requestedAccess);
-  }, [session?.user?.id]);
+    setSharedCanvases((prev) => {
+      const fallbackName = String(options?.canvasName || '').trim() || 'untitled/page-1.cnvs';
+      const fallbackUpdatedAt = String(options?.updatedAt || '').trim() || new Date().toISOString();
+      const existingIndex = prev.findIndex((canvas) => canvas.id === canvasId);
+      if (existingIndex >= 0) {
+        const existing = prev[existingIndex];
+        const nextName = existing.name || fallbackName;
+        const nextUpdatedAt = existing.updated_at || fallbackUpdatedAt;
+        if (nextName === existing.name && nextUpdatedAt === existing.updated_at) {
+          return prev;
+        }
+        const next = [...prev];
+        next[existingIndex] = { ...existing, name: nextName, updated_at: nextUpdatedAt };
+        return next;
+      }
+      return [{ id: canvasId, name: fallbackName, updated_at: fallbackUpdatedAt }, ...prev];
+    });
+
+    void ensureJoinedAccessPersisted(userId, canvasId, requestedAccess).then((persisted) => {
+      if (persisted) {
+        void refreshAllCanvasCollectionsThrottled(userId, { force: true, minGapMs: 0 });
+      }
+    });
+  }, [ensureJoinedAccessPersisted, refreshAllCanvasCollectionsThrottled, session?.user?.id]);
 
   const removeJoinedCanvasAccess = useCallback((userId: string, canvasId: string) => {
     if (!userId || !canvasId) return;
@@ -710,7 +814,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   }, []);
 
   const readServerLastOpenedCanvasId = useCallback(async () => {
-    const rpc = await supabase.rpc('get_last_opened_canvas_id');
+    const rpc: any = await supabase.rpc('get_last_opened_canvas_id');
     if (rpc?.error) {
       if (isPermissionDeniedError(rpc.error)) {
         warnPermissionIssue();
@@ -755,7 +859,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
       const rpc = await supabase.rpc('get_canvas_for_user', {
         p_canvas_id: canvasId,
-      });
+      }) as any;
 
       let data: any[] | null = Array.isArray(rpc?.data)
         ? rpc.data
@@ -928,19 +1032,46 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
 
     if (hasGuestEdits && guestSnapshot) {
-      const canvasName = createDefaultCanvasRouteName();
-      const importedCanvas = await insertCanvasWithRetry(
+      const latestOwned = list[0] || null;
+      const baseOwnedName = latestOwned?.name || '';
+      const baseParsed = parseCanvasRouteName(baseOwnedName);
+      const hasOwnedCanvas = Boolean(baseOwnedName.trim());
+
+      let canvasName = createDefaultCanvasRouteName();
+      if (hasOwnedCanvas) {
+        const pageSlugs = list
+          .map((canvas) => parseCanvasRouteName(canvas.name))
+          .filter((parsed) => parsed.canvasSlug === baseParsed.canvasSlug)
+          .map((parsed) => parsed.pageSlug);
+        const nextPage = nextPageSlug(pageSlugs);
+        canvasName = toCanvasRouteName(baseParsed.canvasSlug, nextPage);
+      }
+
+      const snapshotPayload = {
+        blocks: JSON.parse(JSON.stringify(guestSnapshot.blocks || [])),
+        drawings: JSON.parse(JSON.stringify(guestSnapshot.drawings || [])),
+        pan_x: guestSnapshot.pan.x,
+        pan_y: guestSnapshot.pan.y,
+        zoom: guestSnapshot.zoom,
+      };
+
+      let importedCanvas = await insertCanvasWithRetry(
         userId,
         canvasName,
-        {
-          blocks: JSON.parse(JSON.stringify(guestSnapshot.blocks || [])),
-          drawings: JSON.parse(JSON.stringify(guestSnapshot.drawings || [])),
-          pan_x: guestSnapshot.pan.x,
-          pan_y: guestSnapshot.pan.y,
-          zoom: guestSnapshot.zoom,
-        },
-        true
+        snapshotPayload,
+        !hasOwnedCanvas
       );
+
+      // Fallback for rare naming races: preserve guest data by creating a fresh canvas.
+      if (!importedCanvas?.id && hasOwnedCanvas) {
+        importedCanvas = await insertCanvasWithRetry(
+          userId,
+          createDefaultCanvasRouteName(),
+          snapshotPayload,
+          true
+        );
+      }
+
       if (importedCanvas?.id) {
         clearGuestSnapshot();
         await refreshAllCanvasCollections(userId);
@@ -1124,41 +1255,126 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const deleteCanvases = useCallback(async (ids: string[]) => {
     if (!enabled || !session?.user?.id) return;
     if (!ids.length) return;
+    const userId = session.user.id;
 
     // Invalidate any in-flight loads/saves.
     loadSeqRef.current += 1;
     isLoadingRef.current = true;
 
-    const { error } = await supabase
-      .from('canvases')
-      .delete()
-      .in('id', ids);
+    const ownedIdSet = new Set(canvases.map((canvas) => canvas.id));
+    const joinedIds = ids.filter((id) => !ownedIdSet.has(id) && Boolean(joinedCanvasAccessByCanvasId[id]));
+    const ownedIds = ids.filter((id) => ownedIdSet.has(id));
 
-    if (!error) {
-      const { owned: list } = await refreshAllCanvasCollections(session.user.id);
-      if (!list) {
-        isLoadingRef.current = false;
-        return;
-      }
-      const activeId = currentCanvasIdRef.current;
-      const activeStillExists = activeId ? list.some((canvas) => canvas.id === activeId) : false;
+    let hadDeleteError = false;
+    let missingLeaveRpc = false;
 
-      if (activeStillExists) {
-        isLoadingRef.current = false;
-        return;
-      }
+    if (joinedIds.length) {
+      const leaveRpc: any = await supabase.rpc('leave_joined_canvases', {
+        p_canvas_ids: joinedIds,
+      });
 
-      const next = list[0];
-      if (next?.id) {
-        await loadCanvasById(next.id, session.user.id);
+      if (leaveRpc?.error) {
+        if (isRpcMissingError(leaveRpc.error) || isPostgrestResourceMissingError(leaveRpc.error)) {
+          missingLeaveRpc = true;
+        }
+        // Compatibility fallback for projects where the new RPC migration is not applied yet.
+        const leaveRes = await supabase
+          .from('canvas_permissions')
+          .delete()
+          .eq('user_id', userId)
+          .in('canvas_id', joinedIds);
+
+        if (leaveRes.error) {
+          hadDeleteError = true;
+          if (isPermissionDeniedError(leaveRes.error)) {
+            warnPermissionIssue();
+          }
+          if (isPostgrestResourceMissingError(leaveRes.error)) {
+            warnSchemaNotDeployed();
+          }
+        } else {
+          joinedIds.forEach((id) => removeJoinedCanvasAccess(userId, id));
+        }
       } else {
-        // No canvases left: create a new empty one in the usual pattern.
-        await createCanvas();
+        const leaveRows = Array.isArray(leaveRpc.data) ? leaveRpc.data : [];
+        const leftIds = leaveRows
+          .filter((row: any) => Boolean(row?.left_ok) && typeof row?.canvas_id === 'string')
+          .map((row: any) => String(row.canvas_id));
+
+        if (leftIds.length) {
+          leftIds.forEach((id) => removeJoinedCanvasAccess(userId, id));
+        }
+
+        const failedCount = Math.max(0, joinedIds.length - leftIds.length);
+        if (failedCount > 0) {
+          hadDeleteError = true;
+        }
       }
     }
 
+    if (ownedIds.length) {
+      const { error } = await supabase
+        .from('canvases')
+        .delete()
+        .in('id', ownedIds);
+
+      if (error) {
+        hadDeleteError = true;
+        if (isPermissionDeniedError(error)) {
+          warnPermissionIssue();
+        }
+        if (isPostgrestResourceMissingError(error)) {
+          warnSchemaNotDeployed();
+        }
+      }
+    }
+
+    const { owned, shared } = await refreshAllCanvasCollections(userId);
+    if (!owned && !shared) {
+      isLoadingRef.current = false;
+      if (hadDeleteError) {
+        toast.error('Some selected canvases could not be removed.');
+      }
+      return;
+    }
+
+    const accessibleAfterDelete = [
+      ...((owned || []) as CanvasMeta[]),
+      ...((shared || []) as CanvasMeta[]),
+    ];
+    const activeId = currentCanvasIdRef.current;
+    const activeStillExists = activeId ? accessibleAfterDelete.some((canvas) => canvas.id === activeId) : false;
+
+    if (activeStillExists) {
+      isLoadingRef.current = false;
+      if (hadDeleteError) {
+        toast.error('Some selected canvases could not be removed.');
+      }
+      return;
+    }
+
+    const next = accessibleAfterDelete[0];
+    if (next?.id) {
+      await loadCanvasById(next.id, userId);
+      isLoadingRef.current = false;
+      if (hadDeleteError) {
+        toast.error('Some selected canvases could not be removed.');
+      }
+      return;
+    }
+
+    // No accessible canvases left: create a new empty one in the usual pattern.
+    await createCanvas();
+
     isLoadingRef.current = false;
-  }, [createCanvas, enabled, loadCanvasById, refreshAllCanvasCollections, session?.user?.id]);
+    if (hadDeleteError) {
+      if (missingLeaveRpc) {
+        toast.error('Unable to leave collaborative canvas yet. Apply latest DB migration and retry.');
+      } else {
+        toast.error('Some selected canvases could not be removed.');
+      }
+    }
+  }, [canvases, createCanvas, enabled, joinedCanvasAccessByCanvasId, loadCanvasById, refreshAllCanvasCollections, removeJoinedCanvasAccess, session?.user?.id, warnPermissionIssue, warnSchemaNotDeployed]);
 
   const flushPendingCanvasSync = useCallback(async () => {
     if (!session?.user?.id) return;

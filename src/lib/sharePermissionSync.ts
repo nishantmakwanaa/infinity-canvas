@@ -46,46 +46,59 @@ export async function syncCanvasPermissionFromShare(
   canvasId: string,
   accessLevel?: ShareAccessLevel,
 ) {
-  if (!canvasId) return;
+  if (!canvasId) return false;
 
   if (syncRpcMode === 'disabled') {
-    return;
+    return false;
   }
 
   if (syncRpcMode === 'legacy') {
     const legacy = await callLegacySyncRpc(canvasId);
+    if (!legacy?.error) {
+      return true;
+    }
     if (legacy?.error && Number(legacy.error?.status || 0) === 400) {
       syncRpcMode = 'disabled';
     }
-    return;
+    return false;
   }
 
   if (syncRpcMode === 'current') {
     const preferred = await callSyncRpc(canvasId, accessLevel);
+    if (!preferred?.error) {
+      return true;
+    }
     const preferredStatus = Number(preferred?.error?.status || 0);
     if (preferred?.error && (isSignatureMismatchError(preferred.error) || preferredStatus === 400)) {
       syncRpcMode = 'legacy';
       const legacy = await callLegacySyncRpc(canvasId);
+      if (!legacy?.error) {
+        return true;
+      }
       if (legacy?.error) {
         syncRpcMode = Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto';
       }
     }
-    return;
+    return false;
   }
 
   const preferred = await callSyncRpc(canvasId, accessLevel);
 
   if (!preferred?.error) {
     syncRpcMode = 'current';
-    return;
+    return true;
   }
   const preferredStatus = Number(preferred.error?.status || 0);
-  if (!isSignatureMismatchError(preferred.error) && preferredStatus !== 400) return;
+  if (!isSignatureMismatchError(preferred.error) && preferredStatus !== 400) return false;
 
   syncRpcMode = 'legacy';
 
   const legacy = await callLegacySyncRpc(canvasId);
+  if (!legacy?.error) {
+    return true;
+  }
   if (legacy?.error) {
     syncRpcMode = Number(legacy.error?.status || 0) === 400 ? 'disabled' : 'auto';
   }
+  return false;
 }

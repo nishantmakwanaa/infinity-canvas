@@ -592,12 +592,16 @@ export function useCanvasCollaboration(
 
   const toggleUserVisibility = useCallback((userId: string) => {
     const willShow = visibilityRef.current[userId] === false;
+    visibilityRef.current = {
+      ...visibilityRef.current,
+      [userId]: willShow,
+    };
     const isCurrentlyAppliedUser = lastAppliedSnapshotUserIdRef.current === userId;
     setVisibilityMap((prev) => ({
       ...prev,
-      [userId]: prev[userId] === false,
+      [userId]: willShow,
     }));
-    setPresenceUsers((prev) => prev.map((item) => item.userId === userId ? { ...item, isVisible: !item.isVisible } : item));
+    setPresenceUsers((prev) => prev.map((item) => item.userId === userId ? { ...item, isVisible: willShow } : item));
     if (!willShow) {
       setCursorByUserId((prev) => {
         if (!prev[userId]) return prev;
