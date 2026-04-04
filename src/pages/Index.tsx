@@ -379,8 +379,9 @@ const Index = () => {
       if (store.activeTool === 'text' && hasOnlySingleChar) return;
 
       const code = e.code;
-      const hasCtrlOnly = e.ctrlKey && !e.altKey && !e.metaKey;
-      const hasCtrlAltOnly = e.ctrlKey && e.altKey && !e.metaKey;
+      const hasCtrl = e.ctrlKey && !e.altKey && !e.metaKey;
+      const hasCtrlOnly = hasCtrl && !e.shiftKey;
+      const hasCtrlShiftOnly = hasCtrl && e.shiftKey;
 
       if (hasCtrlOnly && code === 'KeyZ') {
         e.preventDefault();
@@ -431,7 +432,7 @@ const Index = () => {
         return;
       }
 
-      if (hasCtrlOnly && e.shiftKey && code === 'KeyH') {
+      if (hasCtrlShiftOnly && code === 'KeyH') {
         e.preventDefault();
         toggleTextFormat('textHighlight');
         return;
@@ -451,9 +452,9 @@ const Index = () => {
       if (hasOnlySingleChar && code === 'KeyL') { e.preventDefault(); store.setActiveTool('line'); return; }
       if (hasOnlySingleChar && code === 'KeyA') { e.preventDefault(); store.setActiveTool('arrow'); return; }
 
-      if (hasCtrlAltOnly && code === 'Digit1') { e.preventDefault(); setThemePreference('light'); return; }
-      if (hasCtrlAltOnly && code === 'Digit2') { e.preventDefault(); setThemePreference('dark'); return; }
-      if (hasCtrlAltOnly && code === 'Digit3') { e.preventDefault(); setThemePreference('auto'); return; }
+      if (hasCtrlShiftOnly && code === 'Digit7') { e.preventDefault(); setThemePreference('light'); return; }
+      if (hasCtrlShiftOnly && code === 'Digit8') { e.preventDefault(); setThemePreference('dark'); return; }
+      if (hasCtrlShiftOnly && code === 'Digit9') { e.preventDefault(); setThemePreference('auto'); return; }
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);

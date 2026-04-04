@@ -146,7 +146,7 @@ export function ToolSettingsPanel({ isMobile = false, mobileOpen = false, onMobi
   ];
 
   const panelClass = isMobile
-    ? 'fixed bottom-[calc(1rem+88px)] right-3 z-[65] w-56 max-h-[56vh] overflow-auto border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
+    ? 'fixed bottom-[calc(1rem+88px)] right-3 z-[65] w-56 max-h-[56vh] overflow-auto no-scrollbar border border-border bg-card p-3 space-y-3 shadow-lg animate-fade-in'
     : 'fixed top-16 right-4 z-50 w-56 border border-border bg-card p-3 space-y-3 animate-fade-in';
 
   const visibleColors = useMemo(

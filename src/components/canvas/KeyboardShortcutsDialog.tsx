@@ -30,9 +30,9 @@ const SHORTCUTS = [
   ]},
   { section: 'App', items: [
     ['Open shortcuts', 'Ctrl + Alt'],
-    ['Theme light', 'Ctrl + Alt + 1'],
-    ['Theme dark', 'Ctrl + Alt + 2'],
-    ['Theme auto', 'Ctrl + Alt + 3'],
+    ['Theme light', 'Ctrl + Shift + 7'],
+    ['Theme dark', 'Ctrl + Shift + 8'],
+    ['Theme auto', 'Ctrl + Shift + 9'],
     ['Single-letter shortcuts ignored while typing', 'Auto'],
   ]},
 ];
@@ -41,7 +41,7 @@ export function KeyboardShortcutsDialog({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       <div className="fixed inset-0 bg-background/50" onClick={onClose} />
-      <div className="relative z-10 w-[min(920px,95vw)] max-h-[84vh] overflow-auto border border-border bg-card p-5 md:p-6">
+      <div className="relative z-10 w-[min(920px,95vw)] max-h-[84vh] overflow-auto no-scrollbar border border-border bg-card p-5 md:p-6">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-bold font-mono">Keyboard shortcuts</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={16} /></button>

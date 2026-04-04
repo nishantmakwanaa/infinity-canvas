@@ -3,22 +3,33 @@ import { parseCanvasRouteName } from '@/lib/canvasNaming';
 const OWNER_TOKEN_PREFIX = 'pg';
 const SHARE_TOKEN_PREFIX = 'sh';
 
-function toHex(input: string) {
-  const encoded = new TextEncoder().encode(input);
-  return Array.from(encoded)
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
+function toBase64Url(input: string) {
+  const bytes = new TextEncoder().encode(input);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
 }
 
-function fromHex(input: string) {
-  if (!/^[0-9a-fA-F]+$/.test(input) || input.length % 2 !== 0) {
+function fromBase64Url(input: string) {
+  const normalized = input.trim();
+  if (!normalized || !/^[A-Za-z0-9_-]+$/.test(normalized)) {
     return null;
   }
 
   try {
-    const bytes = new Uint8Array(input.length / 2);
-    for (let i = 0; i < input.length; i += 2) {
-      bytes[i / 2] = Number.parseInt(input.slice(i, i + 2), 16);
+    const base64 = normalized
+      .replace(/-/g, '+')
+      .replace(/_/g, '/');
+    const padded = `${base64}${'='.repeat((4 - (base64.length % 4)) % 4)}`;
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
     }
     return new TextDecoder().decode(bytes);
   } catch {
@@ -26,40 +37,21 @@ function fromHex(input: string) {
   }
 }
 
-function stylizeHex(input: string) {
-  if (!input) return '';
-  const chunks: string[] = [];
-  for (let i = 0; i < input.length; i += 8) {
-    chunks.push(input.slice(i, i + 8));
-  }
-  return chunks
-    .map((chunk, index) => {
-      if (index === 0) return chunk;
-      return `${index % 2 === 1 ? '.' : '-'}${chunk}`;
-    })
-    .join('');
-}
-
-function deStylizeHex(input: string) {
-  return input.replace(/[.-]/g, '');
-}
-
 function encodeSegment(input: string) {
-  return stylizeHex(toHex(input));
+  return toBase64Url(input);
 }
 
 function decodeSegment(input: string) {
-  return fromHex(deStylizeHex(input));
+  return fromBase64Url(input);
 }
 
 function stripPageSuffix(value: string) {
   return value.replace(/\.cnvs$/i, '').replace(/\.page$/i, '');
 }
 
-function buildOwnerIdentity(ownerUsername: string, ownerUserId?: string | null) {
+function buildOwnerIdentity(ownerUsername: string, _ownerUserId?: string | null) {
   const username = ownerUsername.trim().toLowerCase();
-  const userId = (ownerUserId || '').trim().toLowerCase();
-  return userId ? `${username}|${userId}` : username;
+  return username;
 }
 
 export function toOwnerPageToken(ownerUsername: string, ownerUserId?: string | null) {
@@ -84,12 +76,13 @@ export function toOwnerPagePath(ownerUsername: string, rawCanvasName: string, ow
 }
 
 export function toSharePagePath(ownerUsername: string, shareToken: string, ownerUserId?: string | null) {
-  const splitAt = Math.max(1, Math.floor(shareToken.length / 2));
-  const left = shareToken.slice(0, splitAt);
-  const right = shareToken.slice(splitAt);
+  const compactShareToken = shareToken.trim().toLowerCase();
+  const splitAt = Math.max(1, Math.floor(compactShareToken.length / 2));
+  const left = compactShareToken.slice(0, splitAt);
+  const right = compactShareToken.slice(splitAt);
   const userToken = `${SHARE_TOKEN_PREFIX}${encodeSegment(buildOwnerIdentity(ownerUsername, ownerUserId))}`;
-  const canvasToken = encodeSegment(left);
-  const pageSegment = `${encodeSegment(right)}.page`;
+  const canvasToken = left;
+  const pageSegment = `${right}.page`;
   return `/${userToken}?${canvasToken}=${pageSegment}`;
 }
 
@@ -127,12 +120,44 @@ export function parseSegmentedApiRequest(rawUserToken?: string | null, rawSearch
   if (!pageToken) return null;
 
   const decodedOwner = decodeSegment(userToken.slice(2));
-  const decodedCanvas = decodeSegment(canvasToken);
-  const decodedPage = decodeSegment(pageToken);
-
-  if (!decodedOwner || !decodedCanvas || !decodedPage) {
+  if (!decodedOwner) {
     return null;
   }
+
+  if (kind === 'share') {
+    const isRawShareToken = /^[0-9a-f]+$/i.test(canvasToken) && /^[0-9a-f]+$/i.test(pageToken);
+    if (isRawShareToken) {
+      return {
+        kind,
+        userToken,
+        canvasToken,
+        pageToken,
+        decodedOwner,
+        decodedCanvas: canvasToken,
+        decodedPage: pageToken,
+      };
+    }
+
+    const decodedCanvas = decodeSegment(canvasToken);
+    const decodedPage = decodeSegment(pageToken);
+    if (!decodedCanvas || !decodedPage) {
+      return null;
+    }
+
+    return {
+      kind,
+      userToken,
+      canvasToken,
+      pageToken,
+      decodedOwner,
+      decodedCanvas,
+      decodedPage,
+    };
+  }
+
+  const decodedCanvas = decodeSegment(canvasToken);
+  const decodedPage = decodeSegment(pageToken);
+  if (!decodedCanvas || !decodedPage) return null;
 
   return {
     kind,

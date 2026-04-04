@@ -151,7 +151,7 @@ export function CanvasSidebar({
           <Pencil size={13} />
         </button>
       </div>
-      <div className="p-2 space-y-1 overflow-auto h-[calc(100%-56px-52px)]">
+      <div className="p-2 space-y-1 overflow-auto no-scrollbar h-[calc(100%-56px-52px)]">
         {groupedCanvases.length === 0 && (
           <div className="text-[11px] font-mono text-muted-foreground px-1 py-2">No canvases yet</div>
         )}
@@ -259,7 +259,7 @@ export function CanvasSidebar({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="max-h-44 overflow-auto border border-border">
+          <div className="max-h-44 overflow-auto no-scrollbar border border-border">
             {groupedCanvases.map((group) =>
               group.pages
                 .filter((page) => selectedIdSet.has(page.id))

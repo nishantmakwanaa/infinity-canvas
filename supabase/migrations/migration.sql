@@ -281,15 +281,38 @@ language plpgsql
 immutable
 as $$
 declare
-  v_payload text := regexp_replace(btrim(coalesce(p_hex, '')), '[\.-]', '', 'g');
+  v_payload text := btrim(coalesce(p_hex, ''));
+  v_legacy_hex text := regexp_replace(v_payload, '[\.-]', '', 'g');
+  v_base64 text;
+  v_pad_len int;
   v_bytes bytea;
 begin
-  if v_payload = '' or v_payload !~ '^[0-9a-fA-F]+$' or length(v_payload) % 2 <> 0 then
+  if v_payload = '' then
+    return null;
+  end if;
+
+  -- New compact tokens: URL-safe base64 (no dots/dashes separators inside payload).
+  if v_payload ~ '^[A-Za-z0-9_-]+$' then
+    begin
+      v_base64 := replace(replace(v_payload, '-', '+'), '_', '/');
+      v_pad_len := (4 - (length(v_base64) % 4)) % 4;
+      if v_pad_len > 0 then
+        v_base64 := v_base64 || repeat('=', v_pad_len);
+      end if;
+      v_bytes := decode(v_base64, 'base64');
+      return convert_from(v_bytes, 'UTF8');
+    exception when others then
+      -- Fall through to legacy hex decoding.
+    end;
+  end if;
+
+  -- Legacy dotted/dashed hex tokens.
+  if v_legacy_hex = '' or v_legacy_hex !~ '^[0-9a-fA-F]+$' or length(v_legacy_hex) % 2 <> 0 then
     return null;
   end if;
 
   begin
-    v_bytes := decode(v_payload, 'hex');
+    v_bytes := decode(v_legacy_hex, 'hex');
     return convert_from(v_bytes, 'UTF8');
   exception when others then
     return null;
@@ -298,7 +321,7 @@ end;
 $$;
 
 comment on function public.decode_hex_to_text(text)
-is 'Decodes dotted/dashed hex token segments into UTF-8 text.';
+is 'Decodes compact URL-safe base64 tokens (preferred) and legacy dotted/dashed hex tokens into UTF-8 text.';
 
 
 -- Resolves segmented API route:
@@ -366,12 +389,18 @@ begin
       v_owner_user_id := v_owner_user_id_text::uuid;
     end if;
 
-    v_share_left := public.decode_hex_to_text(v_canvas_token);
-    v_share_right := public.decode_hex_to_text(v_page_token);
-    if v_share_left is null or v_share_right is null then
-      return;
+    -- New format uses raw split share token halves to keep URLs compact.
+    if v_canvas_token ~ '^[0-9a-f]+$' and v_page_token ~ '^[0-9a-f]+$' then
+      v_share_token := lower(v_canvas_token || v_page_token);
+    else
+      -- Backward compatibility for legacy encoded share halves.
+      v_share_left := public.decode_hex_to_text(v_canvas_token);
+      v_share_right := public.decode_hex_to_text(v_page_token);
+      if v_share_left is null or v_share_right is null then
+        return;
+      end if;
+      v_share_token := v_share_left || v_share_right;
     end if;
-    v_share_token := v_share_left || v_share_right;
 
     return query
       with matched as (
