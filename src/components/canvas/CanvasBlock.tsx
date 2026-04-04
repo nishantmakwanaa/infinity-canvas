@@ -44,8 +44,10 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
       || t.tagName === 'VIDEO'
       || t.tagName === 'AUDIO'
       || t.tagName === 'IFRAME'
+      || t.isContentEditable
       || t.closest('button')
       || t.closest('a')
+      || t.closest('[data-media-interactive="true"]')
     );
   };
 
@@ -164,7 +166,15 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
           </button>
         )}
       </div>
-      <div className="overflow-auto no-scrollbar" style={{ height: block.height - 28 }}>
+      <div
+        className="overflow-auto no-scrollbar"
+        style={{
+          height: block.height - 28,
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y pan-x',
+        }}
+      >
         {renderContent()}
       </div>
 

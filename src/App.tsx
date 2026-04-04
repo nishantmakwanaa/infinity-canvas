@@ -6,6 +6,7 @@ import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import { useRealtimeTranslation } from "@/hooks/useRealtimeTranslation";
 import { setThemePreference, useThemeTime } from "@/hooks/useThemeTime";
+import { useCanvasStore } from "@/store/canvasStore";
 import { useEffect } from "react";
 import { toast } from "sonner";
 
@@ -60,6 +61,10 @@ const App = () => {
     const setEmbedZoomThrough = (active: boolean) => {
       document.documentElement.classList.toggle(embedZoomClass, active);
     };
+    const isCanvasTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return false;
+      return Boolean(target.closest('[data-canvas="true"]'));
+    };
     let wheelZoomResetTimer: number | null = null;
 
     const scheduleEmbedZoomReset = () => {
@@ -74,9 +79,17 @@ const App = () => {
 
     const onWheelPreventBrowserZoom = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
-        setEmbedZoomThrough(true);
-        scheduleEmbedZoomReset();
         e.preventDefault();
+
+        if (isCanvasTarget(e.target)) {
+          setEmbedZoomThrough(true);
+          scheduleEmbedZoomReset();
+          return;
+        }
+
+        const state = useCanvasStore.getState();
+        const delta = -e.deltaY * 0.002;
+        state.setZoom(state.zoom * (1 + delta));
       }
     };
 
@@ -84,6 +97,18 @@ const App = () => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       if (e.key === '+' || e.key === '=' || e.key === '-' || e.key === '_' || e.key === '0') {
         e.preventDefault();
+        const state = useCanvasStore.getState();
+        if (e.key === '0') {
+          state.setZoom(1);
+          return;
+        }
+        if (e.key === '+' || e.key === '=') {
+          state.setZoom(state.zoom * 1.12);
+          return;
+        }
+        if (e.key === '-' || e.key === '_') {
+          state.setZoom(state.zoom / 1.12);
+        }
       }
     };
 
@@ -116,26 +141,11 @@ const App = () => {
       setEmbedZoomThrough(false);
     };
 
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length >= 2) {
-        setEmbedZoomThrough(true);
-      }
-    };
-
-    const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) {
-        setEmbedZoomThrough(false);
-      }
-    };
-
     window.addEventListener('wheel', onWheelPreventBrowserZoom, { passive: false, capture: true });
     window.addEventListener('keydown', onZoomModifierDown, true);
     window.addEventListener('keyup', onZoomModifierUp, true);
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('keydown', onKeyDownPreventBrowserZoom, true);
-    document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
-    document.addEventListener('touchend', onTouchEnd, { capture: true, passive: true });
-    document.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: true });
     document.addEventListener('gesturestart', onGestureStart as EventListener, { passive: false });
     document.addEventListener('gesturechange', onGesture as EventListener, { passive: false });
     document.addEventListener('gestureend', onGestureEnd as EventListener);
@@ -150,9 +160,6 @@ const App = () => {
       window.removeEventListener('keyup', onZoomModifierUp, true);
       window.removeEventListener('blur', onWindowBlur);
       window.removeEventListener('keydown', onKeyDownPreventBrowserZoom, true);
-      document.removeEventListener('touchstart', onTouchStart, true);
-      document.removeEventListener('touchend', onTouchEnd, true);
-      document.removeEventListener('touchcancel', onTouchEnd, true);
       document.removeEventListener('gesturestart', onGestureStart as EventListener);
       document.removeEventListener('gesturechange', onGesture as EventListener);
       document.removeEventListener('gestureend', onGestureEnd as EventListener);

@@ -255,18 +255,22 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
     document.documentElement.classList.remove('cnvs-zoom-through-embeds');
   };
 
-  const scheduleEmbedZoomThroughOff = () => {
+  const scheduleEmbedZoomThroughOff = (delay = 140) => {
     if (embedZoomResetTimerRef.current !== null) {
       window.clearTimeout(embedZoomResetTimerRef.current);
     }
     embedZoomResetTimerRef.current = window.setTimeout(() => {
       disableEmbedZoomThrough();
       embedZoomResetTimerRef.current = null;
-    }, 140);
+    }, delay);
   };
 
   const handleEmbedPointerDown = () => {
     // Ensure provider controls stay clickable on mobile after any zoom gesture.
+    if (embedZoomResetTimerRef.current !== null) {
+      window.clearTimeout(embedZoomResetTimerRef.current);
+      embedZoomResetTimerRef.current = null;
+    }
     disableEmbedZoomThrough();
   };
 
@@ -284,6 +288,14 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   const handleEmbedTouchStartCapture = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length >= 2) {
       enableEmbedZoomThrough();
+      scheduleEmbedZoomThroughOff(260);
+    }
+  };
+
+  const handleEmbedTouchMoveCapture = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length >= 2) {
+      enableEmbedZoomThrough();
+      scheduleEmbedZoomThroughOff(260);
     }
   };
 
@@ -376,9 +388,11 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
         embedUrl ? (
           <div
             className="flex-1 min-h-0 relative"
+            data-media-interactive="true"
             onPointerDownCapture={handleEmbedPointerDown}
             onWheelCapture={handleEmbedWheelCapture}
             onTouchStartCapture={handleEmbedTouchStartCapture}
+            onTouchMoveCapture={handleEmbedTouchMoveCapture}
             onTouchEndCapture={handleEmbedTouchEndCapture}
           >
             <iframe
@@ -399,6 +413,11 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
               autoPlay
               muted={muted}
               playsInline
+              onMouseEnter={() => {
+                if (!videoRef.current || !videoRef.current.paused) return;
+                void videoRef.current.play().catch(() => undefined);
+                setPlaying(true);
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 if (videoRef.current?.paused) {
@@ -509,9 +528,11 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
         ) : (
           <div
             className="flex-1 min-h-0 relative"
+            data-media-interactive="true"
             onPointerDownCapture={handleEmbedPointerDown}
             onWheelCapture={handleEmbedWheelCapture}
             onTouchStartCapture={handleEmbedTouchStartCapture}
+            onTouchMoveCapture={handleEmbedTouchMoveCapture}
             onTouchEndCapture={handleEmbedTouchEndCapture}
           >
             <iframe src={normalizedUrl} className="w-full h-full border-0 cnvs-media-embed" title="live-media-preview" />

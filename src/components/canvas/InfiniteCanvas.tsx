@@ -131,6 +131,9 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   const isPanning = useRef(false);
   const isTouchPanning = useRef(false);
   const isTouchPinching = useRef(false);
+  const touchPanOrigin = useRef({ x: 0, y: 0 });
+  const touchPanThresholdPassed = useRef(false);
+  const embedZoomResetTimer = useRef<number | null>(null);
   const pinchRef = useRef({
     worldX: 0,
     worldY: 0,
@@ -149,6 +152,21 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     canvasY: 0,
     blockId: null,
   });
+
+  const setEmbedZoomThrough = (active: boolean) => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle('cnvs-zoom-through-embeds', active);
+  };
+
+  const scheduleEmbedZoomThroughOff = (delay = 160) => {
+    if (embedZoomResetTimer.current !== null) {
+      window.clearTimeout(embedZoomResetTimer.current);
+    }
+    embedZoomResetTimer.current = window.setTimeout(() => {
+      setEmbedZoomThrough(false);
+      embedZoomResetTimer.current = null;
+    }, delay);
+  };
 
   const isScrollableElement = (el: Element) => {
     const node = el as HTMLElement;
@@ -222,6 +240,15 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     return () => el.removeEventListener('wheel', handleWheel, true);
   }, [handleWheel]);
 
+  useEffect(() => {
+    return () => {
+      if (embedZoomResetTimer.current !== null) {
+        window.clearTimeout(embedZoomResetTimer.current);
+      }
+      setEmbedZoomThrough(false);
+    };
+  }, []);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     if (loading) return;
     const target = e.target as HTMLElement;
@@ -280,6 +307,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
 
       isTouchPanning.current = false;
       isTouchPinching.current = true;
+      setEmbedZoomThrough(true);
       pinchRef.current = {
         startDistance: Math.max(1, distance),
         startZoom: state.zoom,
@@ -297,6 +325,8 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     if (isHandTool) {
       isTouchPinching.current = false;
       isTouchPanning.current = true;
+      touchPanThresholdPassed.current = false;
+      touchPanOrigin.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       selectBlock(null);
       return;
@@ -316,12 +346,15 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     if (menu.open) setMenu((m) => ({ ...m, open: false }));
     isTouchPinching.current = false;
     isTouchPanning.current = true;
+    touchPanThresholdPassed.current = false;
+    touchPanOrigin.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     if (e.touches.length === 2 && isTouchPinching.current) {
       e.preventDefault();
+      setEmbedZoomThrough(true);
       const bounds = containerRef.current?.getBoundingClientRect();
       const left = bounds?.left || 0;
       const top = bounds?.top || 0;
@@ -346,8 +379,15 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }
 
     if (!isTouchPanning.current || e.touches.length !== 1) return;
-    e.preventDefault();
     const t = e.touches[0];
+    if (!touchPanThresholdPassed.current) {
+      const distance = Math.hypot(t.clientX - touchPanOrigin.current.x, t.clientY - touchPanOrigin.current.y);
+      if (distance < 6) {
+        return;
+      }
+      touchPanThresholdPassed.current = true;
+    }
+    e.preventDefault();
     const dx = t.clientX - lastTouch.current.x;
     const dy = t.clientY - lastTouch.current.y;
     lastTouch.current = { x: t.clientX, y: t.clientY };
@@ -356,9 +396,15 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length < 2) {
+      scheduleEmbedZoomThroughOff();
+    }
+
     if (e.touches.length === 1) {
       isTouchPinching.current = false;
       isTouchPanning.current = true;
+      touchPanThresholdPassed.current = false;
+      touchPanOrigin.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       return;
     }
@@ -366,6 +412,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     if (e.touches.length === 0) {
       isTouchPanning.current = false;
       isTouchPinching.current = false;
+      touchPanThresholdPassed.current = false;
     }
   };
 
@@ -665,6 +712,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
         left: `${leftOffsetPercent}%`,
         // Keep canvas gestures responsive while still allowing tap interactions inside embeds on mobile.
         touchAction: 'manipulation',
+        overscrollBehavior: 'none',
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
