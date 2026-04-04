@@ -303,6 +303,9 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }
 
     const target = e.target as HTMLElement;
+    if (target.closest('[data-block-id]')) {
+      return;
+    }
     if (target.closest('input, textarea, button, video, iframe, [contenteditable="true"]')) {
       return;
     }
@@ -660,8 +663,8 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       style={{
         ...dotOffset,
         left: `${leftOffsetPercent}%`,
-        // Prevent browser-level zoom/scroll gestures so pinch is dedicated to canvas zoom.
-        touchAction: 'none',
+        // Keep canvas gestures responsive while still allowing tap interactions inside embeds on mobile.
+        touchAction: 'manipulation',
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

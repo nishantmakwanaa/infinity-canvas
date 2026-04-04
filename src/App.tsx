@@ -56,8 +56,26 @@ const App = () => {
   }, []);
 
   useEffect(() => {
+    const embedZoomClass = 'cnvs-zoom-through-embeds';
+    const setEmbedZoomThrough = (active: boolean) => {
+      document.documentElement.classList.toggle(embedZoomClass, active);
+    };
+    let wheelZoomResetTimer: number | null = null;
+
+    const scheduleEmbedZoomReset = () => {
+      if (wheelZoomResetTimer !== null) {
+        window.clearTimeout(wheelZoomResetTimer);
+      }
+      wheelZoomResetTimer = window.setTimeout(() => {
+        setEmbedZoomThrough(false);
+        wheelZoomResetTimer = null;
+      }, 140);
+    };
+
     const onWheelPreventBrowserZoom = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
+        setEmbedZoomThrough(true);
+        scheduleEmbedZoomReset();
         e.preventDefault();
       }
     };
@@ -69,20 +87,75 @@ const App = () => {
       }
     };
 
+    const onGestureStart = (e: Event) => {
+      setEmbedZoomThrough(true);
+      e.preventDefault();
+    };
+
     const onGesture = (e: Event) => {
       e.preventDefault();
     };
 
+    const onGestureEnd = () => {
+      setEmbedZoomThrough(false);
+    };
+
+    const onZoomModifierDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.key === 'Control' || e.key === 'Meta') {
+        setEmbedZoomThrough(true);
+      }
+    };
+
+    const onZoomModifierUp = (e: KeyboardEvent) => {
+      if (!e.ctrlKey && !e.metaKey) {
+        setEmbedZoomThrough(false);
+      }
+    };
+
+    const onWindowBlur = () => {
+      setEmbedZoomThrough(false);
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length >= 2) {
+        setEmbedZoomThrough(true);
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        setEmbedZoomThrough(false);
+      }
+    };
+
     window.addEventListener('wheel', onWheelPreventBrowserZoom, { passive: false, capture: true });
+    window.addEventListener('keydown', onZoomModifierDown, true);
+    window.addEventListener('keyup', onZoomModifierUp, true);
+    window.addEventListener('blur', onWindowBlur);
     window.addEventListener('keydown', onKeyDownPreventBrowserZoom, true);
-    document.addEventListener('gesturestart', onGesture as EventListener, { passive: false });
+    document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+    document.addEventListener('touchend', onTouchEnd, { capture: true, passive: true });
+    document.addEventListener('touchcancel', onTouchEnd, { capture: true, passive: true });
+    document.addEventListener('gesturestart', onGestureStart as EventListener, { passive: false });
     document.addEventListener('gesturechange', onGesture as EventListener, { passive: false });
+    document.addEventListener('gestureend', onGestureEnd as EventListener);
 
     return () => {
+      setEmbedZoomThrough(false);
+      if (wheelZoomResetTimer !== null) {
+        window.clearTimeout(wheelZoomResetTimer);
+      }
       window.removeEventListener('wheel', onWheelPreventBrowserZoom, true);
+      window.removeEventListener('keydown', onZoomModifierDown, true);
+      window.removeEventListener('keyup', onZoomModifierUp, true);
+      window.removeEventListener('blur', onWindowBlur);
       window.removeEventListener('keydown', onKeyDownPreventBrowserZoom, true);
-      document.removeEventListener('gesturestart', onGesture as EventListener);
+      document.removeEventListener('touchstart', onTouchStart, true);
+      document.removeEventListener('touchend', onTouchEnd, true);
+      document.removeEventListener('touchcancel', onTouchEnd, true);
+      document.removeEventListener('gesturestart', onGestureStart as EventListener);
       document.removeEventListener('gesturechange', onGesture as EventListener);
+      document.removeEventListener('gestureend', onGestureEnd as EventListener);
     };
   }, []);
 

@@ -243,12 +243,70 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   const isAudioUrl = hasUrl && isAudio(normalizedUrl, blobMediaKind);
   const isGifUrl = hasUrl && isGif(normalizedUrl, blobMediaKind);
   const isImageUrl = hasUrl && isImage(normalizedUrl, blobMediaKind);
+  const embedZoomResetTimerRef = useRef<number | null>(null);
+
+  const enableEmbedZoomThrough = () => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.add('cnvs-zoom-through-embeds');
+  };
+
+  const disableEmbedZoomThrough = () => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.remove('cnvs-zoom-through-embeds');
+  };
+
+  const scheduleEmbedZoomThroughOff = () => {
+    if (embedZoomResetTimerRef.current !== null) {
+      window.clearTimeout(embedZoomResetTimerRef.current);
+    }
+    embedZoomResetTimerRef.current = window.setTimeout(() => {
+      disableEmbedZoomThrough();
+      embedZoomResetTimerRef.current = null;
+    }, 140);
+  };
+
+  const handleEmbedPointerDown = () => {
+    // Ensure provider controls stay clickable on mobile after any zoom gesture.
+    disableEmbedZoomThrough();
+  };
+
+  const handleEmbedWheelCapture = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    enableEmbedZoomThrough();
+    scheduleEmbedZoomThroughOff();
+    const state = useCanvasStore.getState();
+    const delta = -e.deltaY * 0.002;
+    state.setZoom(state.zoom * (1 + delta));
+  };
+
+  const handleEmbedTouchStartCapture = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length >= 2) {
+      enableEmbedZoomThrough();
+    }
+  };
+
+  const handleEmbedTouchEndCapture = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length < 2) {
+      disableEmbedZoomThrough();
+    }
+  };
 
   useEffect(() => {
     if (!/^blob:/i.test(normalizedUrl)) {
       setBlobMediaKind('unknown');
     }
   }, [normalizedUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (embedZoomResetTimerRef.current !== null) {
+        window.clearTimeout(embedZoomResetTimerRef.current);
+      }
+      disableEmbedZoomThrough();
+    };
+  }, []);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -290,11 +348,6 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
     void audio.play().catch(() => undefined);
   };
 
-  const blockMediaSurfaceInteraction = (e: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
   return (
     <div className="p-2 h-full flex flex-col gap-1.5 min-h-0">
       {!readOnly && (
@@ -321,21 +374,20 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
 
       {hasUrl ? (
         embedUrl ? (
-          <div className="flex-1 min-h-0 relative">
+          <div
+            className="flex-1 min-h-0 relative"
+            onPointerDownCapture={handleEmbedPointerDown}
+            onWheelCapture={handleEmbedWheelCapture}
+            onTouchStartCapture={handleEmbedTouchStartCapture}
+            onTouchEndCapture={handleEmbedTouchEndCapture}
+          >
             <iframe
               src={embedUrl}
-              className="w-full h-full border-0 pointer-events-none"
+              className="w-full h-full border-0 cnvs-media-embed"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
               title="live-media-preview"
             />
-            {isMobile && (
-              <div
-                className="absolute inset-0 z-[1]"
-                onPointerDown={blockMediaSurfaceInteraction}
-                onClick={blockMediaSurfaceInteraction}
-              />
-            )}
           </div>
         ) : isVid ? (
           <div className="relative flex-1">
@@ -455,15 +507,14 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
         ) : (
-          <div className="flex-1 min-h-0 relative">
-            <iframe src={normalizedUrl} className="w-full h-full border-0 pointer-events-none" title="live-media-preview" />
-            {isMobile && (
-              <div
-                className="absolute inset-0 z-[1]"
-                onPointerDown={blockMediaSurfaceInteraction}
-                onClick={blockMediaSurfaceInteraction}
-              />
-            )}
+          <div
+            className="flex-1 min-h-0 relative"
+            onPointerDownCapture={handleEmbedPointerDown}
+            onWheelCapture={handleEmbedWheelCapture}
+            onTouchStartCapture={handleEmbedTouchStartCapture}
+            onTouchEndCapture={handleEmbedTouchEndCapture}
+          >
+            <iframe src={normalizedUrl} className="w-full h-full border-0 cnvs-media-embed" title="live-media-preview" />
           </div>
         )
       ) : (

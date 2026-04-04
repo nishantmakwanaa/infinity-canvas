@@ -143,6 +143,10 @@
   }
 }
 
+.cnvs-zoom-through-embeds .cnvs-media-embed {
+  pointer-events: none !important;
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;
