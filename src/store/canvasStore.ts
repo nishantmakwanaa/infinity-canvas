@@ -154,7 +154,7 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   selectBlock: (id) => set({ selectedBlockId: id, selectedBlockIds: id ? [id] : [] }),
   selectBlocks: (ids) => set({ selectedBlockIds: ids, selectedBlockId: ids[0] || null }),
   setPan: (pan) => set({ pan }),
-  setZoom: (zoom) => set({ zoom: Math.min(3, Math.max(0.1, zoom)) }),
+  setZoom: (zoom) => set({ zoom: Math.min(8, Math.max(0.05, zoom)) }),
   setActiveTool: (tool) => set({ activeTool: tool, selectedBlockId: null, selectedBlockIds: [] }),
   setToolSettings: (s) => set((st) => ({ toolSettings: { ...st.toolSettings, ...s } })),
   addDrawingElement: (el) => set((s) => ({ drawingElements: [...s.drawingElements, el] })),

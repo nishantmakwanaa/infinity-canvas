@@ -10,6 +10,23 @@ interface AuthUser {
   avatarUrl: string | null;
 }
 
+function normalizeAvatarUrl(value: unknown) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  if (raw.startsWith('//')) return `https:${raw}`;
+  if (raw.startsWith('http://')) return `https://${raw.slice(7)}`;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return null;
+}
+
+function firstValidAvatar(candidates: unknown[]) {
+  for (const candidate of candidates) {
+    const normalized = normalizeAvatarUrl(candidate);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
 export function useAuth() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -19,12 +36,24 @@ export function useAuth() {
     const email = supaUser.email || '';
     // Canonical, immutable username: email local-part (unique in Supabase).
     const username = (email.split('@')[0] || 'user').toLowerCase();
-    const meta = supaUser.user_metadata || {};
+    const meta = (supaUser.user_metadata || {}) as Record<string, unknown>;
+    const identities = Array.isArray((supaUser as any).identities) ? (supaUser as any).identities : [];
+    const identityData = identities
+      .map((identity: any) => identity?.identity_data || {})
+      .filter((data: any) => data && typeof data === 'object');
     const firstName = String(meta.given_name || '').trim();
     const lastName = String(meta.family_name || '').trim();
     const fullName = String(meta.full_name || meta.name || '').trim();
     const displayName = `${firstName} ${lastName}`.trim() || fullName || username;
-    const avatarUrl = meta.avatar_url || meta.picture || null;
+    const avatarUrl = firstValidAvatar([
+      meta.avatar_url,
+      meta.picture,
+      meta.photoURL,
+      meta.profile_image,
+      ...identityData.map((data: any) => data.avatar_url),
+      ...identityData.map((data: any) => data.picture),
+      ...identityData.map((data: any) => data.photoURL),
+    ]);
     return { id: supaUser.id, email, username, displayName, avatarUrl };
   }, []);
 

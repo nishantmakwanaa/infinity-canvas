@@ -235,7 +235,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       const midY = (t1.clientY + t2.clientY) / 2;
 
       const nextZoom = pinchRef.current.startZoom * (distance / pinchRef.current.startDistance);
-      const clampedZoom = Math.min(3, Math.max(0.1, nextZoom));
+      const clampedZoom = Math.min(8, Math.max(0.05, nextZoom));
       const nextPan = {
         x: midX - left - pinchRef.current.worldX * clampedZoom,
         y: midY - top - pinchRef.current.worldY * clampedZoom,

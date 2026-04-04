@@ -30,9 +30,7 @@ function isBlankSnapshot(snapshot: LocalCanvasSnapshot | null) {
   if (!snapshot) return true;
   const noBlocks = (snapshot.blocks || []).length === 0;
   const noDrawings = (snapshot.drawings || []).length === 0;
-  const basePan = snapshot.pan?.x === 0 && snapshot.pan?.y === 0;
-  const baseZoom = snapshot.zoom === 1;
-  return noBlocks && noDrawings && basePan && baseZoom;
+  return noBlocks && noDrawings;
 }
 
 function readGuestSnapshot(): LocalCanvasSnapshot | null {
@@ -166,9 +164,13 @@ export function useCanvasSync(session: Session | null) {
       ? list.find((canvas) => canvas.id === currentCanvasIdRef.current)
       : null;
     const preferred = savedId ? list.find((canvas) => canvas.id === savedId) : null;
-    const first = selectedDuringStartup || preferred || list[0];
+    const first = selectedDuringStartup || list[0] || preferred;
     const guestSnapshot = readGuestSnapshot();
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
+
+    if (!hasGuestEdits && guestSnapshot) {
+      clearGuestSnapshot();
+    }
 
     if (hasGuestEdits && guestSnapshot) {
       const canvasName = createDefaultCanvasRouteName();

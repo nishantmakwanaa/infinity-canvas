@@ -40,6 +40,23 @@ function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
 }
 
+function buildGoogleAvatarRetryUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed || !/googleusercontent\.com/i.test(trimmed)) return null;
+
+  try {
+    const parsed = new URL(trimmed);
+    parsed.searchParams.set('sz', '256');
+    return parsed.toString();
+  } catch {
+    // Keep a string-based fallback for non-standard URL shapes.
+    if (/=s\d+(-c)?$/i.test(trimmed)) {
+      return trimmed.replace(/=s\d+(-c)?$/i, '=s256-c');
+    }
+    return `${trimmed}${trimmed.includes('?') ? '&' : '?'}sz=256`;
+  }
+}
+
 export function AppHeader({
   user,
   loading,
@@ -72,11 +89,15 @@ export function AppHeader({
   const [renamingCanvas, setRenamingCanvas] = useState(false);
   const [renamingPage, setRenamingPage] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [avatarRetryUrl, setAvatarRetryUrl] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuPanelRef = useRef<HTMLDivElement>(null);
   const headerCanvasName = (currentCanvasLabel || '').trim() || 'Untitled Canvas';
   const headerPageName = (currentPageLabel || '').trim() || 'Page 1';
+  const isGuestUser = !user;
+  const profileAvatarSrc = !avatarLoadFailed ? (avatarRetryUrl || user?.avatarUrl || null) : null;
 
   const getShareUrl = async () => {
     if (!user) return null;
@@ -199,6 +220,23 @@ export function AppHeader({
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [showMenu]);
 
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+    setAvatarRetryUrl(null);
+  }, [user?.id, user?.avatarUrl]);
+
+  const handleAvatarImageError = () => {
+    const current = profileAvatarSrc || '';
+    if (!avatarRetryUrl && user?.avatarUrl) {
+      const retry = buildGoogleAvatarRetryUrl(user.avatarUrl);
+      if (retry && retry !== current) {
+        setAvatarRetryUrl(retry);
+        return;
+      }
+    }
+    setAvatarLoadFailed(true);
+  };
+
   return (
     <>
       <header
@@ -215,102 +253,113 @@ export function AppHeader({
               {isSidebarOpen ? <PanelLeftClose size={14} /> : <PanelLeftOpen size={14} />}
             </button>
           )}
-          {editingCanvasName ? (
-            <input
-              autoFocus
-              className="h-8 px-2 border border-border bg-card text-sm font-mono text-foreground min-w-[140px] max-w-[40vw]"
-              value={canvasNameDraft}
-              onChange={(e) => setCanvasNameDraft(e.target.value)}
-              onBlur={() => { void submitCanvasRename(); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void submitCanvasRename();
-                }
-                if (e.key === 'Escape') {
-                  setEditingCanvasName(false);
-                  setCanvasNameDraft(headerCanvasName);
-                }
-              }}
-            />
+          {isGuestUser ? (
+            <div className="flex items-center gap-2 select-none">
+              <div className="w-7 h-7 bg-foreground flex items-center justify-center">
+                <span className="text-background text-xs font-bold font-mono">C</span>
+              </div>
+              <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
+            </div>
           ) : (
-            <button
-              className="max-w-[40vw] truncate text-sm font-semibold tracking-tight text-foreground font-mono hover:text-primary disabled:opacity-60"
-              onClick={startCanvasRename}
-              disabled={!onRenameCanvas || renamingCanvas}
-              title="Rename canvas"
-            >
-              {headerCanvasName}
-            </button>
-          )}
-          <div className="relative">
-            <div className="flex items-center">
-              {editingPageName ? (
+            <>
+              {editingCanvasName ? (
                 <input
                   autoFocus
-                  className="h-7 px-2 border border-border bg-card text-[11px] font-mono text-foreground min-w-[110px]"
-                  value={pageNameDraft}
-                  onChange={(e) => setPageNameDraft(e.target.value)}
-                  onBlur={() => { void submitPageRename(); }}
+                  className="h-8 px-2 border border-border bg-card text-sm font-mono text-foreground min-w-[140px] max-w-[40vw]"
+                  value={canvasNameDraft}
+                  onChange={(e) => setCanvasNameDraft(e.target.value)}
+                  onBlur={() => { void submitCanvasRename(); }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      void submitPageRename();
+                      void submitCanvasRename();
                     }
                     if (e.key === 'Escape') {
-                      setEditingPageName(false);
-                      setPageNameDraft(headerPageName);
+                      setEditingCanvasName(false);
+                      setCanvasNameDraft(headerCanvasName);
                     }
                   }}
                 />
               ) : (
                 <button
-                  className="h-7 px-2 border border-border bg-card text-[11px] font-mono hover:bg-accent disabled:opacity-60"
-                  onClick={startPageRename}
-                  disabled={!onRenamePage || renamingPage}
-                  title="Rename page"
+                  className="max-w-[40vw] truncate text-sm font-semibold tracking-tight text-foreground font-mono hover:text-primary disabled:opacity-60"
+                  onClick={startCanvasRename}
+                  disabled={!onRenameCanvas || renamingCanvas}
+                  title="Rename canvas"
                 >
-                  / {headerPageName}
+                  {headerCanvasName}
                 </button>
               )}
-              <button
-                className="h-7 w-7 border border-l-0 border-border bg-card inline-flex items-center justify-center hover:bg-accent"
-                onClick={() => setShowPageMenu((prev) => !prev)}
-                title="Select page"
-              >
-                <ChevronDown size={12} />
-              </button>
-            </div>
-            {showPageMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowPageMenu(false)} />
-                <div className="absolute left-0 top-9 z-50 w-44 border border-border bg-card p-1 shadow-lg">
-                  <button
-                    className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
-                    onClick={() => {
-                      setShowPageMenu(false);
-                      onCreatePage?.();
-                    }}
-                  >
-                    + Add new page
-                  </button>
-                  <div className="my-1 h-px bg-border" />
-                  {pageItems.map((item) => (
-                    <button
-                      key={item.id}
-                      className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
-                      onClick={() => {
-                        setShowPageMenu(false);
-                        onSelectPage?.(item.id);
+              <div className="relative">
+                <div className="flex items-center">
+                  {editingPageName ? (
+                    <input
+                      autoFocus
+                      className="h-7 px-2 border border-border bg-card text-[11px] font-mono text-foreground min-w-[110px]"
+                      value={pageNameDraft}
+                      onChange={(e) => setPageNameDraft(e.target.value)}
+                      onBlur={() => { void submitPageRename(); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void submitPageRename();
+                        }
+                        if (e.key === 'Escape') {
+                          setEditingPageName(false);
+                          setPageNameDraft(headerPageName);
+                        }
                       }}
+                    />
+                  ) : (
+                    <button
+                      className="h-7 px-2 border border-border bg-card text-[11px] font-mono hover:bg-accent disabled:opacity-60"
+                      onClick={startPageRename}
+                      disabled={!onRenamePage || renamingPage}
+                      title="Rename page"
                     >
-                      {item.label}
+                      / {headerPageName}
                     </button>
-                  ))}
+                  )}
+                  <button
+                    className="h-7 w-7 border border-l-0 border-border bg-card inline-flex items-center justify-center hover:bg-accent"
+                    onClick={() => setShowPageMenu((prev) => !prev)}
+                    title="Select page"
+                  >
+                    <ChevronDown size={12} />
+                  </button>
                 </div>
-              </>
-            )}
-          </div>
+                {showPageMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowPageMenu(false)} />
+                    <div className="absolute left-0 top-9 z-50 w-44 border border-border bg-card p-1 shadow-lg">
+                      <button
+                        className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
+                        onClick={() => {
+                          setShowPageMenu(false);
+                          onCreatePage?.();
+                        }}
+                      >
+                        + Add new page
+                      </button>
+                      <div className="my-1 h-px bg-border" />
+                      {pageItems.map((item) => (
+                        <button
+                          key={item.id}
+                          className="w-full text-left px-2 py-1.5 text-xs font-mono hover:bg-accent"
+                          onClick={() => {
+                            setShowPageMenu(false);
+                            onSelectPage?.(item.id);
+                          }}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
           <div className="relative" ref={menuPanelRef}>
             <button ref={menuButtonRef} onClick={() => setShowMenu(!showMenu)} className="toolbar-btn w-7 h-7">
               <MoreVertical size={14} />
@@ -342,14 +391,34 @@ export function AppHeader({
         ) : (
           <div className="relative">
             <button onClick={() => setShowProfile(!showProfile)} className="w-9 h-9 border border-border bg-card overflow-hidden flex items-center justify-center">
-              {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="w-full h-full object-cover" /> : <UserIcon size={16} className="text-foreground" />}
+              {profileAvatarSrc ? (
+                <img
+                  src={profileAvatarSrc}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                  onError={handleAvatarImageError}
+                />
+              ) : (
+                <UserIcon size={16} className="text-foreground" />
+              )}
             </button>
             {showProfile && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowProfile(false)} />
                 <div className="absolute right-0 top-11 z-50 w-56 border border-border bg-card p-3 space-y-3">
                   <div className="flex items-center gap-2">
-                    {user.avatarUrl ? <img src={user.avatarUrl} alt="" className="w-8 h-8 object-cover" /> : <div className="w-8 h-8 bg-muted flex items-center justify-center"><UserIcon size={14} /></div>}
+                    {profileAvatarSrc ? (
+                      <img
+                        src={profileAvatarSrc}
+                        alt=""
+                        className="w-8 h-8 object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={handleAvatarImageError}
+                      />
+                    ) : (
+                      <div className="w-8 h-8 bg-muted flex items-center justify-center"><UserIcon size={14} /></div>
+                    )}
                     <span className="text-xs font-mono text-foreground truncate">{user.displayName}</span>
                   </div>
                   <button onClick={() => { setShowProfile(false); onSignOut(); }} className="flex items-center gap-2 w-full text-xs font-mono text-muted-foreground hover:text-foreground transition-colors">
