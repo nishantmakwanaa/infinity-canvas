@@ -24,8 +24,6 @@ interface PresenceMeta {
 interface UserSnapshot {
   blocks: CanvasBlock[];
   drawings: DrawingElement[];
-  pan: { x: number; y: number };
-  zoom: number;
   sentAt: number;
 }
 
@@ -92,8 +90,6 @@ export function useCanvasCollaboration(
   const slotGrantedRef = useRef(true);
   const cursorRef = useRef<{ x: number | null; y: number | null }>({ x: null, y: null });
   const lastAppliedSnapshotUserIdRef = useRef<string | null>(null);
-  const viewportTargetRef = useRef<{ pan: { x: number; y: number }; zoom: number } | null>(null);
-  const viewportAnimationRef = useRef<number | null>(null);
 
   const [isConnected, setIsConnected] = useState(false);
   const [presenceUsers, setPresenceUsers] = useState<ActiveCollaborator[]>([]);
@@ -155,8 +151,6 @@ export function useCanvasCollaboration(
   const broadcastSnapshot = useCallback((
     blocks: CanvasBlock[],
     drawings: DrawingElement[],
-    pan: { x: number; y: number },
-    zoom: number,
     options?: { recipientClientId?: string; force?: boolean }
   ) => {
     const channel = channelRef.current;
@@ -172,8 +166,6 @@ export function useCanvasCollaboration(
       snapshot: {
         blocks,
         drawings,
-        pan,
-        zoom,
       },
     };
 
@@ -186,61 +178,6 @@ export function useCanvasCollaboration(
       payload,
     });
   }, [identity]);
-
-  const stopViewportAnimation = useCallback(() => {
-    viewportTargetRef.current = null;
-    if (viewportAnimationRef.current) {
-      window.cancelAnimationFrame(viewportAnimationRef.current);
-      viewportAnimationRef.current = null;
-    }
-  }, []);
-
-  const animateViewportToTarget = useCallback(() => {
-    const target = viewportTargetRef.current;
-    if (!target) {
-      viewportAnimationRef.current = null;
-      return;
-    }
-
-    const store = useCanvasStore.getState();
-    const currentPan = store.pan;
-    const currentZoom = store.zoom;
-    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-
-    const nextPan = {
-      x: lerp(currentPan.x, target.pan.x, 0.28),
-      y: lerp(currentPan.y, target.pan.y, 0.28),
-    };
-    const nextZoom = lerp(currentZoom, target.zoom, 0.28);
-
-    const done =
-      Math.abs(target.pan.x - currentPan.x) < 0.4 &&
-      Math.abs(target.pan.y - currentPan.y) < 0.4 &&
-      Math.abs(target.zoom - currentZoom) < 0.0025;
-
-    applyRemoteRef.current = true;
-    if (done) {
-      store.setPan(target.pan);
-      store.setZoom(target.zoom);
-    } else {
-      store.setPan(nextPan);
-      store.setZoom(nextZoom);
-    }
-    applyRemoteRef.current = false;
-
-    if (done) {
-      viewportTargetRef.current = null;
-      viewportAnimationRef.current = null;
-      return;
-    }
-
-    viewportAnimationRef.current = window.requestAnimationFrame(animateViewportToTarget);
-  }, []);
-
-  const queueViewportTarget = useCallback((pan: { x: number; y: number }, zoom: number) => {
-    void pan;
-    void zoom;
-  }, [animateViewportToTarget]);
 
   const applyStoredSnapshotForUser = useCallback((userId: string) => {
     const snapshot = userId === identity?.id ? localSnapshotRef.current : latestRemoteSnapshotRef.current[userId];
@@ -288,15 +225,13 @@ export function useCanvasCollaboration(
       return {
         blocks: state.blocks,
         drawings: state.drawingElements,
-        pan: state.pan,
-        zoom: state.zoom,
         sentAt: Date.now(),
       } satisfies UserSnapshot;
     })();
 
     localSnapshotRef.current = current;
     sendPresence();
-    broadcastSnapshot(current.blocks, current.drawings, current.pan, current.zoom, { force: true });
+    broadcastSnapshot(current.blocks, current.drawings, { force: true });
   }, [broadcastSnapshot, identity?.id, sendPresence]);
 
   const scheduleReconnect = useCallback(() => {
@@ -441,13 +376,11 @@ export function useCanvasCollaboration(
 
         if (recipientClientId && recipientClientId !== clientIdRef.current) return;
         if (!senderId || senderId === identity.id || senderClientId === clientIdRef.current) return;
-        if (!snapshot || !Array.isArray(snapshot.blocks) || !Array.isArray(snapshot.drawings) || !snapshot.pan) return;
+        if (!snapshot || !Array.isArray(snapshot.blocks) || !Array.isArray(snapshot.drawings)) return;
 
         latestRemoteSnapshotRef.current[senderId] = {
           blocks: snapshot.blocks as CanvasBlock[],
           drawings: snapshot.drawings as DrawingElement[],
-          pan: snapshot.pan,
-          zoom: typeof snapshot.zoom === 'number' ? snapshot.zoom : 1,
           sentAt: Number(payload?.sent_at) || Date.now(),
         };
 
@@ -474,8 +407,6 @@ export function useCanvasCollaboration(
           return {
             blocks: state.blocks,
             drawings: state.drawingElements,
-            pan: state.pan,
-            zoom: state.zoom,
             sentAt: Date.now(),
           } satisfies UserSnapshot;
         })();
@@ -483,8 +414,6 @@ export function useCanvasCollaboration(
         broadcastSnapshot(
           current.blocks,
           current.drawings,
-          current.pan,
-          current.zoom,
           { recipientClientId: requesterClientId, force: true }
         );
       });
@@ -597,13 +526,6 @@ export function useCanvasCollaboration(
 
       sendTimeoutRef.current = window.setTimeout(() => {
         const next = useCanvasStore.getState();
-        localSnapshotRef.current = {
-          blocks: next.blocks,
-          drawings: next.drawingElements,
-          pan: next.pan,
-          zoom: next.zoom,
-          sentAt: Date.now(),
-        };
         sendPresence();
         if (identity?.id && visibilityRef.current[identity.id] === false) {
           return;
@@ -611,7 +533,12 @@ export function useCanvasCollaboration(
         if (!blocksChanged && !drawingsChanged && (panChanged || zoomChanged)) {
           return;
         }
-        broadcastSnapshot(next.blocks, next.drawingElements, next.pan, next.zoom);
+        localSnapshotRef.current = {
+          blocks: next.blocks,
+          drawings: next.drawingElements,
+          sentAt: Date.now(),
+        };
+        broadcastSnapshot(next.blocks, next.drawingElements);
       }, 110);
     });
 
@@ -619,8 +546,6 @@ export function useCanvasCollaboration(
     localSnapshotRef.current = {
       blocks: now.blocks,
       drawings: now.drawingElements,
-      pan: now.pan,
-      zoom: now.zoom,
       sentAt: Date.now(),
     };
 
@@ -647,7 +572,6 @@ export function useCanvasCollaboration(
         window.clearTimeout(viewportSendTimeoutRef.current);
         viewportSendTimeoutRef.current = null;
       }
-      stopViewportAnimation();
       connectedRef.current = false;
       setIsConnected((prev) => (prev ? false : prev));
       setPresenceUsers((prev) => (prev.length ? [] : prev));
@@ -664,7 +588,7 @@ export function useCanvasCollaboration(
         void releaseEditorSlot();
       }
     };
-  }, [applyStoredSnapshotForUser, broadcastSnapshot, canvasId, claimEditorSlot, enabled, identity, reconnectNonce, releaseEditorSlot, requireEditorSlot, scheduleReconnect, sendPresence, stopViewportAnimation, syncCurrentSnapshotToRoom]);
+  }, [applyStoredSnapshotForUser, broadcastSnapshot, canvasId, claimEditorSlot, enabled, identity, reconnectNonce, releaseEditorSlot, requireEditorSlot, scheduleReconnect, sendPresence, syncCurrentSnapshotToRoom]);
 
   const toggleUserVisibility = useCallback((userId: string) => {
     const willShow = visibilityRef.current[userId] === false;

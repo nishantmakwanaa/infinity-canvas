@@ -857,7 +857,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       store.loadCanvas(
         (row.blocks as unknown as CanvasBlock[]) || [],
         { x: row.pan_x, y: row.pan_y },
-        row.zoom,
+        1,
         drawings
       );
       return true;
@@ -1074,7 +1074,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       useCanvasStore.getState().loadCanvas(
         (row.blocks as unknown as CanvasBlock[]) || [],
         { x: Number(row.pan_x) || 0, y: Number(row.pan_y) || 0 },
-        typeof row.zoom === 'number' ? row.zoom : 1,
+        1,
         (row.drawings as DrawingElement[]) || []
       );
       setIsCanvasLoading(false);
@@ -1483,7 +1483,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         useCanvasStore.getState().loadCanvas(
           guestSnapshot.blocks || [],
           guestSnapshot.pan || { x: 0, y: 0 },
-          typeof guestSnapshot.zoom === 'number' ? guestSnapshot.zoom : 1,
+          1,
           guestSnapshot.drawings || []
         );
       } else {
