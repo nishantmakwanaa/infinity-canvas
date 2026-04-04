@@ -70,7 +70,12 @@ function snapshotsEqual(a: any, b: any) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function useCanvasCollaboration(canvasId: string | null, identity: CollabIdentity | null, enabled: boolean) {
+export function useCanvasCollaboration(
+  canvasId: string | null,
+  identity: CollabIdentity | null,
+  enabled: boolean,
+  requireEditorSlot = false
+) {
   const channelRef = useRef<any>(null);
   const clientIdRef = useRef<string>(`client-${Math.random().toString(36).slice(2, 10)}`);
   const applyRemoteRef = useRef(false);
@@ -114,8 +119,8 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
       display_name: identity.displayName,
       avatar_url: identity.avatarUrl,
       active_tool: state.activeTool,
-      cursor_x: cursorRef.current.x,
-      cursor_y: cursorRef.current.y,
+      cursor_x: null,
+      cursor_y: null,
       last_seen_at: Date.now(),
       client_id: clientIdRef.current,
     } satisfies PresenceMeta);
@@ -260,9 +265,35 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
       .sort((a, b) => b[1].sentAt - a[1].sentAt);
 
     const latest = candidates[0];
-    if (!latest) return;
-    applyStoredSnapshotForUser(latest[0]);
-  }, [applyStoredSnapshotForUser]);
+    if (latest) {
+      applyStoredSnapshotForUser(latest[0]);
+      return;
+    }
+
+    if (identity?.id) {
+      applyStoredSnapshotForUser(identity.id);
+    }
+  }, [applyStoredSnapshotForUser, identity?.id]);
+
+  const syncCurrentSnapshotToRoom = useCallback(() => {
+    if (!connectedRef.current || !identity?.id) return;
+    if (visibilityRef.current[identity.id] === false) return;
+
+    const current = localSnapshotRef.current || (() => {
+      const state = useCanvasStore.getState();
+      return {
+        blocks: state.blocks,
+        drawings: state.drawingElements,
+        pan: state.pan,
+        zoom: state.zoom,
+        sentAt: Date.now(),
+      } satisfies UserSnapshot;
+    })();
+
+    localSnapshotRef.current = current;
+    sendPresence();
+    broadcastSnapshot(current.blocks, current.drawings, current.pan, current.zoom, { force: true });
+  }, [broadcastSnapshot, identity?.id, sendPresence]);
 
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimerRef.current) return;
@@ -420,29 +451,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         applyStoredSnapshotForUser(senderId);
       })
       .on('broadcast', { event: 'cursor_move' }, ({ payload }) => {
-        const senderId = String(payload?.user_id || '');
-        const senderClientId = String(payload?.client_id || '');
-        if (!senderId || senderId === identity.id || senderClientId === clientIdRef.current) return;
-        if (visibilityRef.current[senderId] === false) {
-          setCursorByUserId((prev) => {
-            if (!prev[senderId]) return prev;
-            const next = { ...prev };
-            delete next[senderId];
-            return next;
-          });
-          return;
-        }
-
-        const x = payload?.cursor_x;
-        const y = payload?.cursor_y;
-        setCursorByUserId((prev) => ({
-          ...prev,
-          [senderId]: {
-            x: typeof x === 'number' ? x : null,
-            y: typeof y === 'number' ? y : null,
-            updatedAt: Number(payload?.sent_at) || Date.now(),
-          },
-        }));
+        void payload;
       })
       .on('broadcast', { event: 'viewport_move' }, ({ payload }) => {
         void payload;
@@ -478,7 +487,6 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
 
     channel.subscribe((status: string) => {
       if (cancelled) return;
-      if (!slotGrantedRef.current) return;
       if (status === 'SUBSCRIBED') {
         reconnectAttemptsRef.current = 0;
         if (reconnectTimerRef.current) {
@@ -507,45 +515,20 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
 
     channelRef.current = channel;
 
-    void claimEditorSlot().then((slot) => {
-      if (cancelled) return;
-      if (slot.granted) return;
-      if (channelRef.current) {
-        void supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-      connectedRef.current = false;
-      setIsConnected(false);
-      setPresenceUsers([]);
-    });
-
-    const heartbeatId = window.setInterval(() => {
-      sendPresence();
-    }, 3000);
-
-    const onPointerMove = (event: PointerEvent) => {
-      cursorRef.current = { x: event.clientX, y: event.clientY };
-      if (cursorSendTimeoutRef.current) return;
-      cursorSendTimeoutRef.current = window.setTimeout(() => {
-        cursorSendTimeoutRef.current = null;
-        broadcastCursor(cursorRef.current.x, cursorRef.current.y);
-        sendPresence();
-      }, 30);
-    };
-
-    const onPointerLeaveWindow = () => {
-      cursorRef.current = { x: null, y: null };
-      broadcastCursor(null, null);
-      sendPresence();
-    };
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('blur', onPointerLeaveWindow);
-
-    slotRefreshId = window.setInterval(() => {
+    if (requireEditorSlot) {
+      const hadSlotBeforeClaim = slotGrantedRef.current;
       void claimEditorSlot().then((slot) => {
         if (cancelled) return;
+        if (slot.granted && !hadSlotBeforeClaim) {
+          syncCurrentSnapshotToRoom();
+          return;
+        }
         if (slot.granted) return;
+        const capReached = slot.limit_count > 0 && slot.active_count >= slot.limit_count;
+        if (!capReached) {
+          // Keep channel alive; joined-role permission sync can lag briefly on shared links.
+          return;
+        }
         if (channelRef.current) {
           void supabase.removeChannel(channelRef.current);
           channelRef.current = null;
@@ -554,7 +537,41 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         setIsConnected(false);
         setPresenceUsers([]);
       });
-    }, 20_000);
+    } else {
+      slotGrantedRef.current = true;
+      setEditorSlotGranted(true);
+      setEditorSlotActiveCount(0);
+      setEditorSlotLimitCount(20);
+    }
+
+    const heartbeatId = window.setInterval(() => {
+      sendPresence();
+    }, 3000);
+
+    if (requireEditorSlot) {
+      slotRefreshId = window.setInterval(() => {
+        const hadSlotBeforeClaim = slotGrantedRef.current;
+        void claimEditorSlot().then((slot) => {
+          if (cancelled) return;
+          if (slot.granted && !hadSlotBeforeClaim) {
+            syncCurrentSnapshotToRoom();
+            return;
+          }
+          if (slot.granted) return;
+          const capReached = slot.limit_count > 0 && slot.active_count >= slot.limit_count;
+          if (!capReached) {
+            return;
+          }
+          if (channelRef.current) {
+            void supabase.removeChannel(channelRef.current);
+            channelRef.current = null;
+          }
+          connectedRef.current = false;
+          setIsConnected(false);
+          setPresenceUsers([]);
+        });
+      }, 5_000);
+    }
 
     const unsubStore = useCanvasStore.subscribe((state, prevState) => {
       if (applyRemoteRef.current) return;
@@ -609,8 +626,6 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
       if (slotRefreshId) {
         window.clearInterval(slotRefreshId);
       }
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('blur', onPointerLeaveWindow);
       unsubStore();
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
@@ -641,9 +656,11 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         void supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
-      void releaseEditorSlot();
+      if (requireEditorSlot) {
+        void releaseEditorSlot();
+      }
     };
-  }, [applyStoredSnapshotForUser, broadcastSnapshot, canvasId, claimEditorSlot, enabled, identity, reconnectNonce, releaseEditorSlot, scheduleReconnect, sendPresence, stopViewportAnimation]);
+  }, [applyStoredSnapshotForUser, broadcastSnapshot, canvasId, claimEditorSlot, enabled, identity, reconnectNonce, releaseEditorSlot, requireEditorSlot, scheduleReconnect, sendPresence, stopViewportAnimation, syncCurrentSnapshotToRoom]);
 
   const toggleUserVisibility = useCallback((userId: string) => {
     const willShow = visibilityRef.current[userId] === false;
@@ -666,11 +683,9 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         return;
       }
 
-      if (userId === identity?.id || lastAppliedSnapshotUserIdRef.current === userId) {
-        applyLatestVisibleOtherSnapshot(userId);
-      }
+      applyLatestVisibleOtherSnapshot(userId);
     }, 0);
-  }, [applyLatestVisibleOtherSnapshot, applyStoredSnapshotForUser, identity?.id]);
+  }, [applyLatestVisibleOtherSnapshot, applyStoredSnapshotForUser]);
 
   const collaborators = useMemo(() => {
     return presenceUsers.map((entry) => ({

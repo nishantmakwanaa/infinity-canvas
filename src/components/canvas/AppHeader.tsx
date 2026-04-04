@@ -25,6 +25,7 @@ interface AppHeaderProps {
   forceShowCollaboratorsButton?: boolean;
   currentCanvasId?: string | null;
   currentCanvasName?: string | null;
+  readOnlyShareUrl?: string | null;
   leftOffsetPercent?: number;
   showSidebarToggle?: boolean;
   isSidebarOpen?: boolean;
@@ -64,6 +65,7 @@ export function AppHeader({
   forceShowCollaboratorsButton = false,
   currentCanvasId,
   currentCanvasName,
+  readOnlyShareUrl,
   leftOffsetPercent = 0,
   showSidebarToggle = false,
   isSidebarOpen = true,
@@ -112,6 +114,19 @@ export function AppHeader({
   const shouldShowCollaborators = Boolean(
     user && onToggleCollaboratorVisibility && !readOnlyMode && forceShowCollaboratorsButton
   );
+  const canCopyReadOnlyShareUrl = Boolean(readOnlyMode && !canShareCurrentCanvas && readOnlyShareUrl);
+  const effectiveShareUrl = canCopyReadOnlyShareUrl ? (readOnlyShareUrl || '') : shareUrl;
+
+  const emitShareAccessUpdated = useCallback((canvasId?: string | null) => {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent('cnvs-share-access-updated', {
+        detail: {
+          canvasId: canvasId || currentCanvasId || null,
+        },
+      })
+    );
+  }, [currentCanvasId]);
 
   const buildShareUrl = (
     routeOwner: string,
@@ -269,6 +284,7 @@ export function AppHeader({
       setShareUrl(nextShareUrl);
       setIsPublished(true);
       setPublishedCanvasId(context.canvasId);
+      emitShareAccessUpdated(context.canvasId);
       return nextShareUrl;
     } catch {
       toast.error('Failed to publish');
@@ -302,6 +318,7 @@ export function AppHeader({
       setIsPublished(false);
       setShareUrl('');
       setPublishedCanvasId(null);
+      emitShareAccessUpdated(context.canvasId);
       toast.success('Unpublished');
       return true;
     } finally {
@@ -327,6 +344,12 @@ export function AppHeader({
   };
 
   const handleCopyShareLink = async () => {
+    if (canCopyReadOnlyShareUrl && effectiveShareUrl) {
+      await navigator.clipboard.writeText(effectiveShareUrl);
+      toast.success('Share link copied!');
+      return;
+    }
+
     if (!isPublished || !shareUrl) {
       toast.info('Publish first to copy the public link');
       return;
@@ -744,15 +767,15 @@ export function AppHeader({
                 setShowMenu(false);
                 setShowShareMenu((prev) => {
                   const next = !prev;
-                  if (next) {
+                  if (next && canShareCurrentCanvas) {
                     void loadShareState();
                   }
                   return next;
                 });
               }}
-              disabled={sharing || !canShareCurrentCanvas}
+              disabled={sharing || (!canShareCurrentCanvas && !canCopyReadOnlyShareUrl)}
               className="toolbar-btn"
-              title={canShareCurrentCanvas ? 'Share canvas' : 'Only owner can share this canvas'}
+              title={canShareCurrentCanvas ? 'Share canvas' : canCopyReadOnlyShareUrl ? 'Copy this shared link' : 'Only owner can share this canvas'}
             >
               <Share2 size={14} />
             </button>
@@ -760,27 +783,33 @@ export function AppHeader({
               <div ref={shareMenuContentRef} className="absolute top-10 right-0 z-50 w-72 border border-border bg-card p-3 shadow-lg space-y-3">
                 <div className="space-y-1">
                   <div className="text-[11px] font-mono text-foreground">Share canvas</div>
-                  <div className="text-[10px] font-mono text-muted-foreground">Publish to make this page public. Unpublish hides it from public links.</div>
+                  <div className="text-[10px] font-mono text-muted-foreground">
+                    {canCopyReadOnlyShareUrl
+                      ? 'This canvas is opened from a view-only public link.'
+                      : 'Publish to make this page public. Unpublish hides it from public links.'}
+                  </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-mono text-muted-foreground">Permission</label>
-                  <select
-                    className="h-8 w-full border border-border bg-card px-2 text-[11px] font-mono"
-                    value={shareAccessLevel}
-                    onChange={(e) => {
-                      void handleShareAccessChange((e.target.value as 'viewer' | 'editor') || 'viewer');
-                    }}
-                  >
-                    <option value="viewer">Anyone can view</option>
-                    <option value="editor">Anyone can edit</option>
-                  </select>
-                </div>
+                {!canCopyReadOnlyShareUrl && (
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-mono text-muted-foreground">Permission</label>
+                    <select
+                      className="h-8 w-full border border-border bg-card px-2 text-[11px] font-mono"
+                      value={shareAccessLevel}
+                      onChange={(e) => {
+                        void handleShareAccessChange((e.target.value as 'viewer' | 'editor') || 'viewer');
+                      }}
+                    >
+                      <option value="viewer">Anyone can view</option>
+                      <option value="editor">Anyone can edit</option>
+                    </select>
+                  </div>
+                )}
 
                 <div className="border border-border p-2 bg-card flex items-center justify-center min-h-[138px]">
-                  {shareUrl ? (
+                  {effectiveShareUrl ? (
                     <img
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(shareUrl)}`}
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(effectiveShareUrl)}`}
                       alt="Canvas share QR code"
                       className="w-32 h-32"
                     />
@@ -790,15 +819,21 @@ export function AppHeader({
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <button className="h-8 border border-border text-[11px] font-mono hover:bg-accent" onClick={handlePublishToggle} disabled={sharing}>
-                    {isPublished ? 'Unpublish' : 'Publish'}
-                  </button>
-                  <button className="h-8 border border-border text-[11px] font-mono hover:bg-accent" onClick={handleCopyShareLink} disabled={sharing || !isPublished || !shareUrl}>
+                  {!canCopyReadOnlyShareUrl && (
+                    <button className="h-8 border border-border text-[11px] font-mono hover:bg-accent" onClick={handlePublishToggle} disabled={sharing}>
+                      {isPublished ? 'Unpublish' : 'Publish'}
+                    </button>
+                  )}
+                  <button
+                    className={`h-8 border border-border text-[11px] font-mono hover:bg-accent ${canCopyReadOnlyShareUrl ? 'col-span-2' : ''}`}
+                    onClick={handleCopyShareLink}
+                    disabled={sharing || (!canCopyReadOnlyShareUrl && (!isPublished || !shareUrl)) || (canCopyReadOnlyShareUrl && !effectiveShareUrl)}
+                  >
                     Copy link
                   </button>
                 </div>
-                {shareUrl && (
-                  <div className="border border-border p-2 text-[10px] font-mono text-muted-foreground break-all">{shareUrl}</div>
+                {effectiveShareUrl && (
+                  <div className="border border-border p-2 text-[10px] font-mono text-muted-foreground break-all">{effectiveShareUrl}</div>
                 )}
               </div>
             )}

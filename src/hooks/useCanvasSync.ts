@@ -236,6 +236,8 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const isFlushingRemoteRef = useRef(false);
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
+  const collectionsRefreshInFlightRef = useRef(false);
+  const lastCollectionsRefreshAtRef = useRef(0);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
   const [sharedCanvases, setSharedCanvases] = useState<CanvasMeta[]>([]);
   const [shareAccessByCanvasId, setShareAccessByCanvasId] = useState<Record<string, CanvasAccessLevel>>({});
@@ -384,6 +386,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     type JoinedRow = { id: string; name: string; updated_at: string; role: string };
     let rows: JoinedRow[] | null = null;
+    let usedLocalFallbackOnly = false;
 
     const rpc = await supabase.rpc('list_joined_canvases');
     if (!rpc?.error && Array.isArray(rpc?.data)) {
@@ -452,6 +455,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
           .in('id', localJoinedIds);
 
         if (!localCanvasErr && Array.isArray(localCanvasRows)) {
+          usedLocalFallbackOnly = true;
           rows = localCanvasRows
             .filter((c) => c.user_id !== userId)
             .map((c) => ({
@@ -478,8 +482,12 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       const canvasId = String(row?.id || '').trim();
       if (!canvasId) return;
       const role = String(row?.role || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
-      const localRole = localJoinedAccess[canvasId];
-      nextJoined[canvasId] = (localRole === 'editor' || role === 'editor') ? 'editor' : 'viewer';
+      if (usedLocalFallbackOnly) {
+        const localRole = localJoinedAccess[canvasId];
+        nextJoined[canvasId] = localRole === 'editor' ? 'editor' : role;
+      } else {
+        nextJoined[canvasId] = role;
+      }
     });
 
     const mapped = rows.map((row) => ({
@@ -541,14 +549,35 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     return { owned, shared };
   }, [refreshCanvases, refreshShareAccessByCanvasIds, refreshSharedCanvases]);
 
+  const refreshAllCanvasCollectionsThrottled = useCallback(async (
+    userId: string,
+    options?: { force?: boolean; minGapMs?: number }
+  ) => {
+    if (!userId) return;
+    if (collectionsRefreshInFlightRef.current) return;
+
+    const now = Date.now();
+    const minGapMs = options?.minGapMs ?? 2500;
+    if (!options?.force && now - lastCollectionsRefreshAtRef.current < minGapMs) {
+      return;
+    }
+
+    collectionsRefreshInFlightRef.current = true;
+    lastCollectionsRefreshAtRef.current = now;
+    try {
+      await refreshAllCanvasCollections(userId);
+    } finally {
+      collectionsRefreshInFlightRef.current = false;
+    }
+  }, [refreshAllCanvasCollections]);
+
   const markJoinedCanvasAccess = useCallback((canvasId: string, access: CanvasAccessLevel) => {
     const userId = session?.user?.id;
     if (!userId || !canvasId) return;
     const requestedAccess: CanvasAccessLevel = access === 'editor' ? 'editor' : 'viewer';
 
     setJoinedCanvasAccessByCanvasId((prev) => {
-      const existing = prev[canvasId];
-      const nextAccess: CanvasAccessLevel = (existing === 'editor' || requestedAccess === 'editor') ? 'editor' : 'viewer';
+      const nextAccess: CanvasAccessLevel = requestedAccess;
       const next = { ...prev, [canvasId]: nextAccess };
       writeJoinedCanvasAccess(userId, next);
       return next;
@@ -754,13 +783,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return;
     }
 
-    const serverSavedId = await readServerLastOpenedCanvasId();
-    const savedId = serverSavedId || readLastOpenedCanvasId(userId);
     const selectedDuringStartup = currentCanvasIdRef.current
       ? list.find((canvas) => canvas.id === currentCanvasIdRef.current)
       : null;
-    const preferred = savedId ? list.find((canvas) => canvas.id === savedId) : null;
-    const first = selectedDuringStartup || preferred || list[0];
+    const first = selectedDuringStartup || list[0];
     const guestSnapshot = readGuestSnapshot();
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
 
@@ -841,7 +867,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
-  }, [loadCanvasById, readServerLastOpenedCanvasId, refreshAllCanvasCollections]);
+  }, [loadCanvasById, refreshAllCanvasCollections]);
 
   const createCanvas = useCallback(async (name?: string) => {
     if (!enabled || !session?.user?.id) return;
@@ -1353,6 +1379,50 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       window.removeEventListener('beforeunload', onBeforeUnload);
     };
   }, [enabled, flushPendingCanvasSync, persistInMemoryPendingSync, session?.user?.id]);
+
+  useEffect(() => {
+    if (!enabled || !session?.user?.id) return;
+
+    const userId = session.user.id;
+    let stopped = false;
+
+    const refreshCollections = (force = false) => {
+      if (stopped) return;
+      if (document.visibilityState !== 'visible') return;
+      if (isLoadingRef.current) return;
+      void refreshAllCanvasCollectionsThrottled(userId, {
+        force,
+        minGapMs: force ? 1000 : 3000,
+      });
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshCollections(true);
+      }
+    };
+
+    const onFocus = () => {
+      refreshCollections(true);
+    };
+
+    const onShareAccessUpdated = () => {
+      refreshCollections(true);
+    };
+
+    const intervalId = window.setInterval(() => refreshCollections(false), 20_000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('cnvs-share-access-updated', onShareAccessUpdated as EventListener);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('cnvs-share-access-updated', onShareAccessUpdated as EventListener);
+    };
+  }, [enabled, refreshAllCanvasCollectionsThrottled, session?.user?.id]);
 
   useEffect(() => {
     if (!enabled || session?.user?.id) return;

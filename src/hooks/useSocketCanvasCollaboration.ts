@@ -69,7 +69,12 @@ function snapshotsEqual(a: any, b: any) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function useSocketCanvasCollaboration(canvasId: string | null, identity: CollabIdentity | null, enabled: boolean) {
+export function useSocketCanvasCollaboration(
+  canvasId: string | null,
+  identity: CollabIdentity | null,
+  enabled: boolean,
+  requireEditorSlot = false
+) {
   const socketRef = useRef<Socket | null>(null);
   const clientIdRef = useRef<string>(`client-${Math.random().toString(36).slice(2, 10)}`);
   const applyRemoteRef = useRef(false);
@@ -264,9 +269,15 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
       .sort((a, b) => b[1].sentAt - a[1].sentAt);
 
     const latest = candidates[0];
-    if (!latest) return;
-    applyStoredSnapshotForUser(latest[0]);
-  }, [applyStoredSnapshotForUser]);
+    if (latest) {
+      applyStoredSnapshotForUser(latest[0]);
+      return;
+    }
+
+    if (identity?.id) {
+      applyStoredSnapshotForUser(identity.id);
+    }
+  }, [applyStoredSnapshotForUser, identity?.id]);
 
   const sendPresence = useCallback(() => {
     const socket = socketRef.current;
@@ -280,8 +291,8 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
       display_name: identity.displayName,
       avatar_url: identity.avatarUrl,
       active_tool: state.activeTool,
-      cursor_x: cursorRef.current.x,
-      cursor_y: cursorRef.current.y,
+      cursor_x: null,
+      cursor_y: null,
       last_seen_at: Date.now(),
       client_id: clientIdRef.current,
     });
@@ -338,6 +349,27 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
 
     socket.emit('collab:snapshot', payload);
   }, [canvasId, identity]);
+
+  const syncCurrentSnapshotToRoom = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket || !socket.connected || !identity?.id) return;
+    if (visibilityRef.current[identity.id] === false) return;
+
+    const current = localSnapshotRef.current || (() => {
+      const state = useCanvasStore.getState();
+      return {
+        blocks: state.blocks,
+        drawings: state.drawingElements,
+        pan: state.pan,
+        zoom: state.zoom,
+        sentAt: Date.now(),
+      } satisfies UserSnapshot;
+    })();
+
+    localSnapshotRef.current = current;
+    sendPresence();
+    broadcastSnapshot(current.blocks, current.drawings, current.pan, current.zoom, { force: true });
+  }, [broadcastSnapshot, identity?.id, sendPresence]);
 
   const claimEditorSlot = useCallback(async () => {
     if (!canvasId || !identity?.id) {
@@ -478,7 +510,7 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
     };
 
     const handleConnect = () => {
-      if (cancelled || !slotGrantedRef.current) return;
+      if (cancelled) return;
 
       setIsConnected(true);
       socket.emit('join_canvas', {
@@ -527,23 +559,7 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
     };
 
     const handleCursorMove = (payload: any) => {
-      const senderId = String(payload?.user_id || '');
-      const senderClientId = String(payload?.client_id || '');
-      if (!senderId || senderId === identity.id || senderClientId === clientIdRef.current) return;
-
-      if (visibilityRef.current[senderId] === false) {
-        removeCursorUser(senderId);
-        return;
-      }
-
-      const x = payload?.cursor_x;
-      const y = payload?.cursor_y;
-      upsertCursorTarget(
-        senderId,
-        typeof x === 'number' ? x : null,
-        typeof y === 'number' ? y : null,
-        Number(payload?.sent_at) || Date.now()
-      );
+      void payload;
     };
 
     const handleViewportMove = (payload: any) => {
@@ -587,53 +603,58 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
     socket.on('collab:viewport_move', handleViewportMove);
     socket.on('collab:snapshot_request', handleSnapshotRequest);
 
-    void claimEditorSlot().then((slot) => {
-      if (cancelled) return;
-      if (!slot.granted) {
-        setIsConnected(false);
-        setPresenceUsers([]);
-        socket.disconnect();
-        return;
-      }
+    if (requireEditorSlot) {
+      const hadSlotBeforeClaim = slotGrantedRef.current;
+      void claimEditorSlot().then((slot) => {
+        if (cancelled) return;
+        if (slot.granted && !hadSlotBeforeClaim) {
+          syncCurrentSnapshotToRoom();
+        }
+        const capReached = slot.limit_count > 0 && slot.active_count >= slot.limit_count;
+        if (!slot.granted && capReached) {
+          setIsConnected(false);
+          setPresenceUsers([]);
+          socket.disconnect();
+          return;
+        }
+        socket.connect();
+      });
+    } else {
+      slotGrantedRef.current = true;
+      setEditorSlotGranted(true);
+      setEditorSlotActiveCount(0);
+      setEditorSlotLimitCount(20);
       socket.connect();
-    });
+    }
 
     const heartbeatId = window.setInterval(() => {
       sendPresence();
     }, 3000);
 
-    const onPointerMove = (event: PointerEvent) => {
-      cursorRef.current = { x: event.clientX, y: event.clientY };
-      if (cursorSendTimeoutRef.current) return;
-      cursorSendTimeoutRef.current = window.setTimeout(() => {
-        cursorSendTimeoutRef.current = null;
-        broadcastCursor(cursorRef.current.x, cursorRef.current.y);
-        sendPresence();
-      }, 30);
-    };
+    const slotRefreshId = requireEditorSlot
+      ? window.setInterval(() => {
+        const hadSlotBeforeClaim = slotGrantedRef.current;
+        void claimEditorSlot().then((slot) => {
+          if (cancelled) return;
+          if (slot.granted && !hadSlotBeforeClaim) {
+            syncCurrentSnapshotToRoom();
+            return;
+          }
+          if (slot.granted) return;
+          const capReached = slot.limit_count > 0 && slot.active_count >= slot.limit_count;
+          if (!capReached) {
+            return;
+          }
 
-    const onPointerLeaveWindow = () => {
-      cursorRef.current = { x: null, y: null };
-      broadcastCursor(null, null);
-      sendPresence();
-    };
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('blur', onPointerLeaveWindow);
-
-    const slotRefreshId = window.setInterval(() => {
-      void claimEditorSlot().then((slot) => {
-        if (cancelled) return;
-        if (slot.granted) return;
-
-        setIsConnected(false);
-        setPresenceUsers([]);
-        if (socketRef.current) {
-          socketRef.current.disconnect();
-          socketRef.current = null;
-        }
-      });
-    }, 20_000);
+          setIsConnected(false);
+          setPresenceUsers([]);
+          if (socketRef.current) {
+            socketRef.current.disconnect();
+            socketRef.current = null;
+          }
+        });
+      }, 5_000)
+      : null;
 
     const unsubStore = useCanvasStore.subscribe((state, prevState) => {
       if (applyRemoteRef.current) return;
@@ -685,9 +706,9 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
     return () => {
       cancelled = true;
       window.clearInterval(heartbeatId);
-      window.clearInterval(slotRefreshId);
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('blur', onPointerLeaveWindow);
+      if (slotRefreshId) {
+        window.clearInterval(slotRefreshId);
+      }
       unsubStore();
 
       if (sendTimeoutRef.current) {
@@ -720,19 +741,22 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
         socketRef.current.disconnect();
         socketRef.current = null;
       }
-      void releaseEditorSlot();
+      if (requireEditorSlot) {
+        void releaseEditorSlot();
+      }
     };
   }, [
     applyStoredSnapshotForUser,
-    broadcastCursor,
     broadcastSnapshot,
     canvasId,
     claimEditorSlot,
     enabled,
     identity,
+    requireEditorSlot,
     releaseEditorSlot,
     removeCursorUser,
     sendPresence,
+    syncCurrentSnapshotToRoom,
     stopCursorAnimation,
     stopViewportAnimation,
     upsertCursorTarget,
@@ -756,9 +780,7 @@ export function useSocketCanvasCollaboration(canvasId: string | null, identity: 
         return;
       }
 
-      if (userId === identity?.id || lastAppliedSnapshotUserIdRef.current === userId) {
-        applyLatestVisibleOtherSnapshot(userId);
-      }
+      applyLatestVisibleOtherSnapshot(userId);
     }, 0);
   }, [applyLatestVisibleOtherSnapshot, applyStoredSnapshotForUser, identity?.id, removeCursorUser]);
 

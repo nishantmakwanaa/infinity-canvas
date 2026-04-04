@@ -46,12 +46,6 @@ function clampDesktopSidebarWidth(value: number) {
   return Math.max(8, Math.min(20, value));
 }
 
-function firstName(value: string) {
-  const trimmed = String(value || '').trim();
-  if (!trimmed) return 'User';
-  return trimmed.split(/\s+/)[0];
-}
-
 const Index = () => {
   useThemeTime();
   const { user, session, loading, signInWithGoogle, signOut } = useAuth();
@@ -122,17 +116,32 @@ const Index = () => {
   );
   const currentOwnedShareAccess = activeAccessCanvasId ? shareAccessByCanvasId[activeAccessCanvasId] : undefined;
   const currentJoinedShareAccess = activeAccessCanvasId ? joinedCanvasAccessByCanvasId[activeAccessCanvasId] : undefined;
+  const isShareRouteToken = Boolean(rawUserToken && (parsedApiRequest?.kind === 'share' || parsedApiRequest?.kind === 'share-edit'));
+  const hasSharedAccess = currentOwnedShareAccess === 'viewer' || currentOwnedShareAccess === 'editor'
+    || currentJoinedShareAccess === 'viewer' || currentJoinedShareAccess === 'editor';
   const allowCollaboratorsForCurrentCanvas = Boolean(
+    user?.id &&
+    activeCanvasIdForCollab &&
+    (isEditorMode || isReadOnlyMode) &&
+    (isCurrentCanvasOwned || hasSharedAccess || isShareRouteToken)
+  );
+  const requireEditorSlotForCurrentCanvas = Boolean(
     user?.id &&
     isEditorMode &&
     activeCanvasIdForCollab &&
     (
+      isCurrentCanvasOwned ||
       currentOwnedShareAccess === 'editor' ||
       currentJoinedShareAccess === 'editor' ||
       (rawUserToken && parsedApiRequest?.kind === 'share-edit')
     )
   );
   const collaborationActivationReady = Boolean(activeCanvasIdForCollab) && !isRouteLoading && !isCanvasLoading;
+  const readOnlyShareUrl = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    if (!(rawUserToken && parsedApiRequest?.kind === 'share')) return null;
+    return `${window.location.origin}${window.location.pathname}${window.location.search}`;
+  }, [location.pathname, location.search, parsedApiRequest?.kind, rawUserToken]);
   const collaborationIdentity = useMemo(
     () => (user
       ? {
@@ -157,7 +166,8 @@ const Index = () => {
   } = useSocketCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && useSocketTransport
+    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && useSocketTransport,
+    requireEditorSlotForCurrentCanvas
   );
 
   const {
@@ -170,7 +180,8 @@ const Index = () => {
   } = useCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && !useSocketTransport
+    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && !useSocketTransport,
+    requireEditorSlotForCurrentCanvas
   );
 
   const collaborators = useSocketTransport ? socketCollaborators : realtimeCollaborators;
@@ -181,7 +192,7 @@ const Index = () => {
   const editorSlotLimitCount = useSocketTransport ? socketEditorSlotLimitCount : realtimeEditorSlotLimitCount;
   const editorSlotCapReached = editorSlotLimitCount > 0 && editorSlotActiveCount >= editorSlotLimitCount;
 
-  const collabEditLocked = allowCollaboratorsForCurrentCanvas && !editorSlotGranted && !isCurrentCanvasOwned && editorSlotCapReached;
+  const collabEditLocked = requireEditorSlotForCurrentCanvas && !editorSlotGranted && !isCurrentCanvasOwned && editorSlotCapReached;
   const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked;
   const canMutateCanvas = isEditorMode && !collabEditLocked;
 
@@ -190,16 +201,6 @@ const Index = () => {
   const effectiveCanvasLoading = isRouteLoading || (syncEnabled && isCanvasLoading);
   const showHeaderAndBars = !effectiveCanvasLoading;
   const activeCanvasName = currentCanvasName || routeCanvasName;
-  const visibleRemoteCursors = useMemo(
-    () => collaborators.filter((collab) => (
-      !collab.isSelf &&
-      collab.isVisible &&
-      Number.isFinite(Number((collab as any).cursorX)) &&
-      Number.isFinite(Number((collab as any).cursorY))
-    )),
-    [collaborators]
-  );
-
   const currentParsedName = parseCanvasRouteName(activeCanvasName);
   const pageItems = useMemo(
     () => {
@@ -830,6 +831,7 @@ const Index = () => {
           onSignIn={() => setShowGuestAuthDialog(true)}
           canShareCurrentCanvas={isCurrentCanvasOwned}
           readOnlyMode={effectiveReadOnlyMode}
+          readOnlyShareUrl={readOnlyShareUrl}
           forceShowCollaboratorsButton={allowCollaboratorsForCurrentCanvas}
           currentCanvasId={effectiveCurrentCanvasId}
           currentCanvasName={activeCanvasName}
@@ -852,45 +854,6 @@ const Index = () => {
           collaborationLimitCount={editorSlotLimitCount}
           onToggleCollaboratorVisibility={toggleUserVisibility}
         />
-      )}
-
-      {allowCollaboratorsForCurrentCanvas && visibleRemoteCursors.length > 0 && (
-        <div className="fixed inset-0 z-[45] pointer-events-none">
-          {visibleRemoteCursors.map((collab) => {
-            const x = Number((collab as any).cursorX);
-            const y = Number((collab as any).cursorY);
-            return (
-              <div
-                key={`cursor-${collab.userId}`}
-                className="absolute"
-                style={{
-                  left: `${x}px`,
-                  top: `${y}px`,
-                  transform: 'translate(-1px, -1px)',
-                  transition: 'left 55ms linear, top 55ms linear',
-                  willChange: 'left, top',
-                }}
-              >
-                <div
-                  className="w-0 h-0"
-                  style={{
-                    borderLeft: '8px solid transparent',
-                    borderRight: '8px solid transparent',
-                    borderBottom: `14px solid ${collab.color}`,
-                    transform: 'rotate(-22deg)',
-                    transformOrigin: '50% 60%',
-                  }}
-                />
-                <div
-                  className="mt-0.5 ml-2 px-1.5 py-0.5 text-[9px] font-mono text-white rounded-sm"
-                  style={{ backgroundColor: collab.color }}
-                >
-                  {firstName(collab.displayName)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
       )}
 
       {isSidebarOpen && canMutateCanvas && (
