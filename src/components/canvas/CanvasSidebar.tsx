@@ -207,9 +207,13 @@ export function CanvasSidebar({
           <span className="text-xs font-mono font-semibold tracking-tight text-foreground">CNVS</span>
         </div>
         <button
+          type="button"
           className="w-7 h-7 border border-border hover:bg-accent flex items-center justify-center"
           title="Create new canvas"
-          onClick={onCreateCanvas}
+          onClick={(event) => {
+            event.preventDefault();
+            onCreateCanvas();
+          }}
         >
           <Pencil size={13} />
         </button>

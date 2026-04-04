@@ -44,7 +44,25 @@ export interface ActiveCollaborator {
   cursorY?: number | null;
 }
 
-const SOCKET_SERVER_URL = (import.meta.env.VITE_SOCKET_SERVER_URL as string | undefined)?.trim() || '';
+const RAW_SOCKET_SERVER_URL = (import.meta.env.VITE_SOCKET_SERVER_URL as string | undefined)?.trim() || '';
+
+function resolveSocketServerUrl(rawUrl: string) {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+
+  try {
+    const parsed = new URL(trimmed);
+    if (typeof window !== 'undefined' && parsed.host === window.location.host) {
+      // Same-origin socket should connect directly without forcing an absolute http(s) URL.
+      return '';
+    }
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch {
+    return trimmed;
+  }
+}
+
+const SOCKET_SERVER_URL = resolveSocketServerUrl(RAW_SOCKET_SERVER_URL);
 
 function colorFromId(id: string) {
   const palette = [
@@ -274,10 +292,14 @@ export function useSocketCanvasCollaboration(
       return;
     }
 
-    if (identity?.id) {
-      applyStoredSnapshotForUser(identity.id);
-    }
-  }, [applyStoredSnapshotForUser, identity?.id]);
+    const state = useCanvasStore.getState();
+    applyRemoteRef.current = true;
+    useCanvasStore.getState().applyRemoteSnapshot([], state.pan, state.zoom, []);
+    lastAppliedSnapshotUserIdRef.current = null;
+    window.setTimeout(() => {
+      applyRemoteRef.current = false;
+    }, 0);
+  }, [applyStoredSnapshotForUser]);
 
   const sendPresence = useCallback(() => {
     const socket = socketRef.current;
@@ -431,15 +453,9 @@ export function useSocketCanvasCollaboration(
       return;
     }
 
-    if (!SOCKET_SERVER_URL) {
-      setIsConnected(false);
-      setPresenceUsers([]);
-      return;
-    }
-
     let cancelled = false;
 
-    const socket = io(SOCKET_SERVER_URL, {
+    const socket = io(SOCKET_SERVER_URL || undefined, {
       autoConnect: false,
       transports: ['websocket'],
       reconnection: true,
@@ -764,6 +780,7 @@ export function useSocketCanvasCollaboration(
 
   const toggleUserVisibility = useCallback((userId: string) => {
     const willShow = visibilityRef.current[userId] === false;
+    const isCurrentlyAppliedUser = lastAppliedSnapshotUserIdRef.current === userId;
     setVisibilityMap((prev) => ({
       ...prev,
       [userId]: prev[userId] === false,
@@ -780,9 +797,13 @@ export function useSocketCanvasCollaboration(
         return;
       }
 
+      if (!isCurrentlyAppliedUser) {
+        return;
+      }
+
       applyLatestVisibleOtherSnapshot(userId);
     }, 0);
-  }, [applyLatestVisibleOtherSnapshot, applyStoredSnapshotForUser, identity?.id, removeCursorUser]);
+  }, [applyLatestVisibleOtherSnapshot, applyStoredSnapshotForUser, removeCursorUser]);
 
   const collaborators = useMemo(() => {
     return presenceUsers.map((entry) => ({
@@ -800,6 +821,6 @@ export function useSocketCanvasCollaboration(
     editorSlotGranted,
     editorSlotActiveCount,
     editorSlotLimitCount,
-    socketServerConfigured: Boolean(SOCKET_SERVER_URL),
+    socketServerConfigured: Boolean(RAW_SOCKET_SERVER_URL),
   };
 }

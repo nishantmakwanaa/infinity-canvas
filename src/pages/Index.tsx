@@ -125,6 +125,15 @@ const Index = () => {
     (isEditorMode || isReadOnlyMode) &&
     (isCurrentCanvasOwned || hasSharedAccess || isShareRouteToken)
   );
+  const showCollaboratorsButtonForCurrentCanvas = Boolean(
+    user?.id &&
+    activeCanvasIdForCollab &&
+    (
+      currentOwnedShareAccess === 'editor' ||
+      currentJoinedShareAccess === 'editor' ||
+      (rawUserToken && parsedApiRequest?.kind === 'share-edit')
+    )
+  );
   const requireEditorSlotForCurrentCanvas = Boolean(
     user?.id &&
     isEditorMode &&
@@ -154,7 +163,7 @@ const Index = () => {
   );
 
   const socketServerUrl = String(import.meta.env.VITE_SOCKET_SERVER_URL || '').trim();
-  const useSocketTransport = Boolean(socketServerUrl);
+  const preferSocketTransport = socketServerUrl.length > 0;
 
   const {
     collaborators: socketCollaborators,
@@ -166,7 +175,7 @@ const Index = () => {
   } = useSocketCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && useSocketTransport,
+    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && preferSocketTransport,
     requireEditorSlotForCurrentCanvas
   );
 
@@ -180,10 +189,11 @@ const Index = () => {
   } = useCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && !useSocketTransport,
+    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && (!preferSocketTransport || !socketConnected),
     requireEditorSlotForCurrentCanvas
   );
 
+  const useSocketTransport = preferSocketTransport && socketConnected;
   const collaborators = useSocketTransport ? socketCollaborators : realtimeCollaborators;
   const collaborationConnected = useSocketTransport ? socketConnected : realtimeConnected;
   const toggleUserVisibility = useSocketTransport ? socketToggleUserVisibility : realtimeToggleUserVisibility;
@@ -832,7 +842,7 @@ const Index = () => {
           canShareCurrentCanvas={isCurrentCanvasOwned}
           readOnlyMode={effectiveReadOnlyMode}
           readOnlyShareUrl={readOnlyShareUrl}
-          forceShowCollaboratorsButton={allowCollaboratorsForCurrentCanvas}
+          forceShowCollaboratorsButton={showCollaboratorsButtonForCurrentCanvas}
           currentCanvasId={effectiveCurrentCanvasId}
           currentCanvasName={activeCanvasName}
           currentCanvasLabel={currentParsedName.canvasLabel}

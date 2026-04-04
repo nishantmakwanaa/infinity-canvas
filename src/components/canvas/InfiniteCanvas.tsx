@@ -3,6 +3,7 @@ import { useCanvasStore, type CanvasBlock, genId } from '@/store/canvasStore';
 import { CanvasBlockComponent } from './CanvasBlock';
 import { DrawingLayer } from './DrawingLayer';
 import { toast } from 'sonner';
+import { getNoteSize } from '@/lib/blockSizing';
 
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
 
@@ -23,6 +24,61 @@ interface Props {
 }
 
 const DRAWING_TOOLS = ['pencil', 'eraser', 'text', 'shape', 'line', 'arrow'];
+const MEDIA_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'svg', 'gif', 'apng', 'bmp', 'ico', 'heic', 'heif', 'heiv', 'tif', 'tiff', 'jfif'];
+const MEDIA_VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'm3u8', 'm4v', 'avi', 'wmv', 'flv', 'mkv', '3gp', 'ts', 'mts', 'm2ts', 'gifv'];
+const MEDIA_AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'oga', 'opus', 'aiff', 'alac', 'amr', 'wma'];
+
+function extensionFromUrl(rawUrl: string) {
+  const cleaned = rawUrl.split('#')[0].split('?')[0];
+  const dot = cleaned.lastIndexOf('.');
+  if (dot < 0) return '';
+  return cleaned.slice(dot + 1).toLowerCase();
+}
+
+function toUrlCandidate(input: string) {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (/^(blob:|data:|file:)/i.test(trimmed)) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}(\/|$|\?)/i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  return null;
+}
+
+function isUrlLike(input: string) {
+  const candidate = toUrlCandidate(input);
+  if (!candidate) return false;
+  try {
+    const parsed = new URL(candidate);
+    return Boolean(parsed.hostname || parsed.protocol === 'blob:' || parsed.protocol === 'data:' || parsed.protocol === 'file:');
+  } catch {
+    return false;
+  }
+}
+
+function isMediaUrl(input: string) {
+  const candidate = toUrlCandidate(input);
+  if (!candidate) return false;
+  if (/^(blob:|data:|file:)/i.test(candidate)) return true;
+
+  const ext = extensionFromUrl(candidate);
+  if (MEDIA_IMAGE_EXTENSIONS.includes(ext) || MEDIA_VIDEO_EXTENSIONS.includes(ext) || MEDIA_AUDIO_EXTENSIONS.includes(ext)) {
+    return true;
+  }
+
+  return /(^|[/?=&_-])(image|img|photo|video|stream|movie|clip|audio|podcast|music|sound|voice)([/?=&_-]|$)/i.test(candidate);
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName?.toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return true;
+  if (el.isContentEditable) return true;
+  if (el.closest('[contenteditable="true"], input, textarea')) return true;
+  return false;
+}
 
 export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = false }: Props) {
   const blocks = useCanvasStore((s) => s.blocks);
@@ -381,82 +437,131 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }));
   };
 
-  const handlePaste = async () => {
+  const handlePaste = useCallback(async (clipboardData?: DataTransfer | null) => {
     const targetPoint = getPasteTargetPoint();
-    const current = useCanvasStore.getState();
-    const selected = current.blocks.filter((block) => current.selectedBlockIds.includes(block.id));
-    if (selected.length) {
-      insertCopiedBlocks({ type: 'cnvs-blocks', blocks: selected }, targetPoint);
-      toast.success('Canvas component pasted');
-      return;
-    }
+    const createSimpleBlock = (type: 'note' | 'link' | 'media', payload: { content?: string; url?: string }) => {
+      addBlock(type, targetPoint.x, targetPoint.y);
+      const createdId = useCanvasStore.getState().selectedBlockId;
+      if (!createdId) return;
 
-    const copiedBlocks = readCopiedCanvasBlocks();
-    if (copiedBlocks) {
-      insertCopiedBlocks(copiedBlocks, targetPoint);
-      toast.success('Canvas component pasted');
-      return;
-    }
+      if (type === 'note') {
+        const content = payload.content || '';
+        const size = getNoteSize(content);
+        updateBlock(createdId, {
+          content,
+          width: size.width,
+          height: size.height,
+        });
+        return;
+      }
 
-    let text = '';
-    try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      toast.error('Clipboard access blocked');
-      return;
-    }
-    if (!text) {
-      toast.info('Clipboard is empty');
-      return;
-    }
+      if (payload.url) {
+        updateBlock(createdId, { url: payload.url });
+      }
+    };
 
-    try {
-      const parsed = JSON.parse(text) as CopiedBlockPayload | LegacyCopiedBlockPayload;
-      if (parsed?.type === 'cnvs-blocks' && Array.isArray((parsed as CopiedBlockPayload).blocks)) {
-        const nextPayload: CopiedBlockPayload = {
-          type: 'cnvs-blocks',
-          blocks: (parsed as CopiedBlockPayload).blocks.filter((block) => block?.id),
-        };
-        if (nextPayload.blocks.length) {
+    const plainFromClipboard = String(clipboardData?.getData('text/plain') || '').trim();
+    const uriListFromClipboard = String(clipboardData?.getData('text/uri-list') || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line && !line.startsWith('#')) || '';
+
+    const maybeSerialized = plainFromClipboard.startsWith('{') ? plainFromClipboard : '';
+    if (maybeSerialized) {
+      try {
+        const parsed = JSON.parse(maybeSerialized) as CopiedBlockPayload | LegacyCopiedBlockPayload;
+        if (parsed?.type === 'cnvs-blocks' && Array.isArray((parsed as CopiedBlockPayload).blocks)) {
+          const nextPayload: CopiedBlockPayload = {
+            type: 'cnvs-blocks',
+            blocks: (parsed as CopiedBlockPayload).blocks.filter((block) => block?.id),
+          };
+          if (nextPayload.blocks.length) {
+            localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, JSON.stringify(nextPayload));
+            insertCopiedBlocks(nextPayload, targetPoint);
+            toast.success('Canvas component pasted');
+            return;
+          }
+        }
+        if (parsed?.type === 'cnvs-block' && (parsed as LegacyCopiedBlockPayload).block?.id) {
+          const nextPayload: CopiedBlockPayload = { type: 'cnvs-blocks', blocks: [(parsed as LegacyCopiedBlockPayload).block] };
           localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, JSON.stringify(nextPayload));
           insertCopiedBlocks(nextPayload, targetPoint);
           toast.success('Canvas component pasted');
           return;
         }
+      } catch {
+        // Continue classification for non-JSON text.
       }
-      if (parsed?.type === 'cnvs-block' && (parsed as LegacyCopiedBlockPayload).block?.id) {
-        const nextPayload: CopiedBlockPayload = { type: 'cnvs-blocks', blocks: [(parsed as LegacyCopiedBlockPayload).block] };
-        localStorage.setItem(CANVAS_BLOCK_CLIPBOARD_KEY, JSON.stringify(nextPayload));
-        insertCopiedBlocks(nextPayload, targetPoint);
+    }
+
+    const items = clipboardData?.items ? Array.from(clipboardData.items) : [];
+    const mediaFileItem = items.find((item) => item.kind === 'file' && /^(image|video|audio)\//i.test(item.type));
+    if (mediaFileItem) {
+      const file = mediaFileItem.getAsFile();
+      if (file) {
+        createSimpleBlock('media', { url: URL.createObjectURL(file) });
+        toast.success('Media pasted');
+        return;
+      }
+    }
+
+    let text = uriListFromClipboard || plainFromClipboard;
+    if (!text) {
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        const copiedBlocks = readCopiedCanvasBlocks();
+        if (copiedBlocks) {
+          insertCopiedBlocks(copiedBlocks, targetPoint);
+          toast.success('Canvas component pasted');
+          return;
+        }
+        toast.error('Clipboard access blocked');
+        return;
+      }
+    }
+
+    if (!text) {
+      const copiedBlocks = readCopiedCanvasBlocks();
+      if (copiedBlocks) {
+        insertCopiedBlocks(copiedBlocks, targetPoint);
         toast.success('Canvas component pasted');
         return;
       }
-    } catch {
-      // Continue as plain text paste.
+      toast.info('Clipboard is empty');
+      return;
     }
 
-    const targetId = menu.blockId || useCanvasStore.getState().selectedBlockId;
-    if (targetId) {
-      const target = useCanvasStore.getState().blocks.find((block) => block.id === targetId);
-      if (target) {
-        if (target.type === 'link' || target.type === 'media') {
-          updateBlock(target.id, { url: text });
-        } else {
-          updateBlock(target.id, { content: `${target.content || ''}${target.content ? '\n' : ''}${text}` });
-        }
-        selectBlock(target.id);
-        toast.success('Pasted');
-        return;
+    const normalizedText = text.trim();
+    const urlCandidate = toUrlCandidate(normalizedText);
+    const treatAsUrl = Boolean(urlCandidate && isUrlLike(normalizedText));
+
+    if (treatAsUrl && urlCandidate) {
+      if (isMediaUrl(urlCandidate)) {
+        createSimpleBlock('media', { url: urlCandidate });
+        toast.success('Media block created from link');
+      } else {
+        createSimpleBlock('link', { url: urlCandidate });
+        toast.success('Link block created from link');
       }
+      return;
     }
 
-    addBlock('note', targetPoint.x, targetPoint.y);
-    const createdId = useCanvasStore.getState().selectedBlockId;
-    if (createdId) {
-      updateBlock(createdId, { content: text });
-    }
-    toast.success('Pasted');
-  };
+    createSimpleBlock('note', { content: text });
+    toast.success('Note block created from text');
+  }, [addBlock, getPasteTargetPoint, insertCopiedBlocks, readCopiedCanvasBlocks]);
+
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      if (readOnly || loading) return;
+      if (isTypingTarget(event.target)) return;
+      event.preventDefault();
+      void handlePaste(event.clipboardData);
+    };
+
+    window.addEventListener('paste', onPaste, true);
+    return () => window.removeEventListener('paste', onPaste, true);
+  }, [handlePaste, loading, readOnly]);
 
   const handleSelect = () => {
     if (menu.blockId) {

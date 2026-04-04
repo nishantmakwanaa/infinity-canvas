@@ -331,16 +331,53 @@ export function AppHeader({
     if (!canShareCurrentCanvas) {
       setIsPublished(false);
       setShareUrl('');
+      setPublishedCanvasId(null);
       return;
     }
     const context = await resolveShareContext();
     if (!context) return;
 
-    if (!publishedCanvasId || publishedCanvasId !== context.canvasId) {
+    const { data, error } = await supabase
+      .from('shared_canvases')
+      .select('share_token,access_level,owner_username,created_at')
+      .eq('canvas_id', context.canvasId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
       setIsPublished(false);
       setShareUrl('');
+      setPublishedCanvasId(null);
       return;
     }
+
+    const rows = Array.isArray(data) ? data : [];
+    if (!rows.length) {
+      setIsPublished(false);
+      setShareUrl('');
+      setPublishedCanvasId(null);
+      return;
+    }
+
+    const editorRow = rows.find((row: any) => String(row?.access_level || '').toLowerCase() === 'editor');
+    const viewerRow = rows.find((row: any) => String(row?.access_level || '').toLowerCase() === 'viewer');
+    const activeRow = editorRow || viewerRow || rows[0];
+    const shareToken = String((activeRow as any)?.share_token || '').trim();
+    if (!shareToken) {
+      setIsPublished(false);
+      setShareUrl('');
+      setPublishedCanvasId(null);
+      return;
+    }
+
+    const access = String((activeRow as any)?.access_level || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
+    const ownerFromRow = String((activeRow as any)?.owner_username || '').trim();
+    const routeOwner = ownerFromRow || context.routeOwner;
+    const nextShareUrl = buildShareUrl(routeOwner, shareToken, access, user.id);
+
+    setShareAccessLevel(access);
+    setShareUrl(nextShareUrl);
+    setIsPublished(true);
+    setPublishedCanvasId(context.canvasId);
   };
 
   const handleCopyShareLink = async () => {

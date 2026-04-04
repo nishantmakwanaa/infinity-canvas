@@ -1,18 +1,22 @@
 import { useCanvasStore, CanvasBlock, TodoItem, FONT_MAP } from '@/store/canvasStore';
 import { Plus, Check } from 'lucide-react';
 import { getTodoSize } from '@/lib/blockSizing';
+import { getBlockForegroundColor, getBlockMutedColor } from '@/lib/blockColors';
 import type { CSSProperties } from 'react';
 
 export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
   const todos = block.todos || [];
   const textFont = FONT_MAP[block.fontFamily || 'mono'];
+  const foregroundColor = getBlockForegroundColor(block.backgroundColor);
+  const mutedColor = getBlockMutedColor(block.backgroundColor);
   const textStyle: CSSProperties = {
     fontFamily: textFont,
     fontWeight: block.textBold ? 700 : 400,
     fontStyle: block.textItalic ? 'italic' : 'normal',
     textDecoration: block.textUnderline ? 'underline' : 'none',
     backgroundColor: block.textHighlight ? 'rgba(250, 204, 21, 0.28)' : 'transparent',
+    color: foregroundColor || undefined,
   };
 
   const updateTodo = (todoId: string, updates: Partial<TodoItem>) => {
@@ -65,19 +69,15 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
           </button>
           {readOnly ? (
             <span
-              className={`flex-1 text-sm font-mono ${
-                todo.done ? 'line-through text-muted-foreground' : 'text-foreground'
-              }`}
-              style={textStyle}
+              className={`flex-1 text-sm font-mono ${todo.done ? 'line-through' : ''}`}
+              style={{ ...textStyle, color: todo.done ? (mutedColor || foregroundColor || undefined) : (foregroundColor || undefined) }}
             >
               {todo.text || 'To do...'}
             </span>
           ) : (
             <input
-              className={`flex-1 bg-transparent text-sm font-mono focus:outline-none placeholder:text-muted-foreground ${
-                todo.done ? 'line-through text-muted-foreground' : 'text-foreground'
-              }`}
-              style={textStyle}
+              className={`flex-1 bg-transparent text-sm font-mono focus:outline-none ${todo.done ? 'line-through' : ''}`}
+              style={{ ...textStyle, color: todo.done ? (mutedColor || foregroundColor || undefined) : (foregroundColor || undefined) }}
               placeholder="To do..."
               value={todo.text}
               onChange={(e) => updateTodo(todo.id, { text: e.target.value })}
@@ -85,7 +85,8 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
           )}
           {!readOnly && (
             <button
-              className="text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 text-xs transition-opacity"
+              className="opacity-0 group-hover:opacity-100 text-xs transition-opacity"
+              style={{ color: mutedColor || undefined }}
               onClick={() => removeTodo(todo.id)}
             >
               ×
@@ -95,7 +96,8 @@ export function TodoBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
       ))}
       {!readOnly && (
         <button
-          className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-xs font-mono mt-2 transition-colors"
+          className="flex items-center gap-1.5 text-xs font-mono mt-2 transition-colors"
+          style={{ color: mutedColor || undefined }}
           onClick={addTodo}
         >
           <Plus size={10} /> add item

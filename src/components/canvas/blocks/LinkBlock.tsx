@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { getBlockForegroundColor, getBlockMutedColor } from '@/lib/blockColors';
 
 function getDomain(url: string) {
   try { return new URL(url).hostname; } catch { return ''; }
@@ -79,12 +80,15 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
   const lastFetchedUrl = useRef('');
   const lastAutoSizeUrl = useRef('');
   const textFont = FONT_MAP[block.fontFamily || 'mono'];
+  const foregroundColor = getBlockForegroundColor(block.backgroundColor);
+  const mutedColor = getBlockMutedColor(block.backgroundColor);
   const textStyle: CSSProperties = {
     fontFamily: textFont,
     fontWeight: block.textBold ? 700 : 400,
     fontStyle: block.textItalic ? 'italic' : 'normal',
     textDecoration: block.textUnderline ? 'underline' : 'none',
     backgroundColor: block.textHighlight ? 'rgba(250, 204, 21, 0.28)' : 'transparent',
+    color: foregroundColor || undefined,
   };
 
   useEffect(() => {
@@ -147,7 +151,7 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
       <div className="p-3 h-full flex flex-col gap-2" style={textStyle}>
         <div className="flex items-center gap-2">
           {domain && <img src={getFaviconUrl(normalizedUrl)} alt="" className="w-4 h-4" />}
-          <span className="text-sm font-mono text-foreground truncate" style={textStyle}>{block.content || domain || 'Link'}</span>
+          <span className="text-sm font-mono truncate" style={textStyle}>{block.content || domain || 'Link'}</span>
         </div>
         {normalizedUrl && domain && (
           <div
@@ -171,8 +175,8 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
     <div className="p-3 h-full flex flex-col gap-2" style={textStyle}>
       <div className="flex items-center gap-2">
         <input
-          className="flex-1 bg-transparent text-xs font-mono text-muted-foreground focus:outline-none placeholder:text-muted-foreground border-b border-border pb-1"
-          style={textStyle}
+          className="flex-1 bg-transparent text-xs font-mono focus:outline-none border-b border-border pb-1"
+          style={{ ...textStyle, color: mutedColor || foregroundColor || undefined }}
           placeholder="Paste URL..."
           value={block.url || ''}
           ref={inputRef}
@@ -183,14 +187,21 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
           }}
         />
         {normalizedUrl && domain && (
-          <a href={normalizedUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground transition-colors" onClick={(e) => e.stopPropagation()}>
+          <a
+            href={normalizedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="transition-colors"
+            style={{ color: mutedColor || undefined }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <ExternalLink size={12} />
           </a>
         )}
       </div>
-      {fetchingTitle && <span className="text-[10px] font-mono text-muted-foreground">Fetching title...</span>}
+      {fetchingTitle && <span className="text-[10px] font-mono" style={{ color: mutedColor || undefined }}>Fetching title...</span>}
       {block.content && (
-        <span className="text-sm font-mono text-foreground truncate" style={textStyle}>{block.content}</span>
+        <span className="text-sm font-mono truncate" style={textStyle}>{block.content}</span>
       )}
       {normalizedUrl && domain && (
         <div
@@ -208,8 +219,8 @@ export function LinkBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: 
             <>
               <iframe src={normalizedUrl} className="w-full h-full pointer-events-none" title={block.content || domain} />
               <div className="absolute top-2 left-2 px-1.5 py-0.5 bg-background/80 border border-border flex items-center gap-1">
-                <Globe size={11} className="text-muted-foreground" />
-                <span className="text-[10px] font-mono text-muted-foreground">{domain}</span>
+                <Globe size={11} style={{ color: mutedColor || undefined }} />
+                <span className="text-[10px] font-mono" style={{ color: mutedColor || undefined }}>{domain}</span>
               </div>
             </>
           )}

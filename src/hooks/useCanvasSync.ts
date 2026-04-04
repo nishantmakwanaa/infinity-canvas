@@ -227,6 +227,8 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const flushSoonTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const guestSaveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const lastGuestSignatureRef = useRef('');
+  const lastQueuedSignatureByCanvasRef = useRef<Record<string, string>>({});
+  const bootstrapCreatePromiseByUserRef = useRef<Record<string, Promise<CanvasMeta | null>>>({});
   const pendingSyncCacheRef = useRef<Record<string, PendingCanvasSyncSnapshot>>({});
   const blockedWriteCanvasIdsRef = useRef<Set<string>>(new Set());
   const sharedCanvasesRef = useRef<CanvasMeta[]>([]);
@@ -234,6 +236,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const permissionWarningShownRef = useRef(false);
   const schemaMissingWarningShownRef = useRef(false);
   const isFlushingRemoteRef = useRef(false);
+  const flushRetryRequestedRef = useRef(false);
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
   const collectionsRefreshInFlightRef = useRef(false);
@@ -347,19 +350,6 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   }, [warnPermissionIssue, warnSchemaNotDeployed]);
 
   const refreshCanvases = useCallback(async (userId: string) => {
-    const rpc = await supabase.rpc('list_owned_canvases');
-    if (!rpc?.error && Array.isArray(rpc?.data)) {
-      const rows = (rpc.data || []) as CanvasMeta[];
-      setCanvases(rows);
-      return rows;
-    }
-    if (isPermissionDeniedError(rpc?.error)) {
-      warnPermissionIssue();
-    }
-    if (isPostgrestResourceMissingError(rpc?.error)) {
-      warnSchemaNotDeployed();
-    }
-
     const { data, error } = await supabase
       .from('canvases')
       .select('id,name,updated_at')
@@ -371,6 +361,21 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       setCanvases(rows);
       return rows;
     }
+
+    const rpc = await supabase.rpc('list_owned_canvases');
+    if (!rpc?.error && Array.isArray(rpc?.data)) {
+      const rows = (rpc.data || []) as CanvasMeta[];
+      setCanvases(rows);
+      return rows;
+    }
+
+    if (isPermissionDeniedError(rpc?.error)) {
+      warnPermissionIssue();
+    }
+    if (isPostgrestResourceMissingError(rpc?.error)) {
+      warnSchemaNotDeployed();
+    }
+
     if (isPermissionDeniedError(error)) {
       warnPermissionIssue();
     }
@@ -531,6 +536,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         next[id] = 'viewer';
       }
     });
+
+    Object.entries(next).forEach(([canvasId, accessLevel]) => {
+      if (accessLevel === 'editor') {
+        blockedWriteCanvasIdsRef.current.delete(canvasId);
+      }
+    });
+
     setShareAccessByCanvasId(next);
     return next;
   }, [warnPermissionIssue]);
@@ -545,9 +557,68 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       ...((owned || []).map((canvas) => canvas.id)),
       ...((shared || []).map((canvas) => canvas.id)),
     ];
-    await refreshShareAccessByCanvasIds(ids);
-    return { owned, shared };
+    const shareAccess = await refreshShareAccessByCanvasIds(ids);
+    return { owned, shared, shareAccess };
   }, [refreshCanvases, refreshShareAccessByCanvasIds, refreshSharedCanvases]);
+
+  const ensureSingleBootstrapCanvas = useCallback(async (userId: string) => {
+    if (!userId) return null;
+
+    const inFlight = bootstrapCreatePromiseByUserRef.current[userId];
+    if (inFlight) {
+      return await inFlight;
+    }
+
+    const promise = (async () => {
+      const existingOwned = await refreshCanvases(userId);
+      if (Array.isArray(existingOwned) && existingOwned.length) {
+        return existingOwned[0];
+      }
+
+      const defaultName = createDefaultCanvasRouteName();
+      const created = await insertCanvasWithRetry(userId, defaultName, undefined, false);
+      if (created?.id) {
+        return created as CanvasMeta;
+      }
+
+      const sameNameLookup = await supabase
+        .from('canvases')
+        .select('id,name,updated_at')
+        .eq('user_id', userId)
+        .eq('name', defaultName)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (sameNameLookup.data?.id) {
+        return sameNameLookup.data as CanvasMeta;
+      }
+
+      const ownedAfterCreateAttempt = await refreshCanvases(userId);
+      if (Array.isArray(ownedAfterCreateAttempt) && ownedAfterCreateAttempt.length) {
+        return ownedAfterCreateAttempt[0];
+      }
+
+      const fallbackCreated = await insertCanvasWithRetry(userId, defaultName, undefined, true);
+      if (fallbackCreated?.id) {
+        return fallbackCreated as CanvasMeta;
+      }
+
+      const finalOwned = await refreshCanvases(userId);
+      if (Array.isArray(finalOwned) && finalOwned.length) {
+        return finalOwned[0];
+      }
+
+      return null;
+    })();
+
+    bootstrapCreatePromiseByUserRef.current[userId] = promise;
+    try {
+      return await promise;
+    } finally {
+      delete bootstrapCreatePromiseByUserRef.current[userId];
+    }
+  }, [insertCanvasWithRetry, refreshCanvases]);
 
   const refreshAllCanvasCollectionsThrottled = useCallback(async (
     userId: string,
@@ -575,6 +646,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     const userId = session?.user?.id;
     if (!userId || !canvasId) return;
     const requestedAccess: CanvasAccessLevel = access === 'editor' ? 'editor' : 'viewer';
+
+    if (requestedAccess === 'editor') {
+      blockedWriteCanvasIdsRef.current.delete(canvasId);
+    }
 
     setJoinedCanvasAccessByCanvasId((prev) => {
       const nextAccess: CanvasAccessLevel = requestedAccess;
@@ -734,6 +809,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
       canvasIdRef.current = row.id;
       currentCanvasIdRef.current = row.id;
+      blockedWriteCanvasIdsRef.current.delete(row.id);
       setCurrentCanvasId(row.id);
       setCurrentCanvasName((row as any).name || null);
       if (persistForUserId) {
@@ -772,7 +848,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     isLoadingRef.current = true;
     setIsCanvasLoading(true);
 
-    const { owned: list } = await refreshAllCanvasCollections(userId);
+    const { owned: list, shareAccess } = await refreshAllCanvasCollections(userId);
     if (!list) {
       isLoadingRef.current = false;
       setIsCanvasLoading(false);
@@ -783,10 +859,31 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return;
     }
 
-    const selectedDuringStartup = currentCanvasIdRef.current
-      ? list.find((canvas) => canvas.id === currentCanvasIdRef.current)
-      : null;
-    const first = selectedDuringStartup || list[0];
+    const firstOwnedPrivateFromAccess = list.find((canvas) => !shareAccess?.[canvas.id]);
+
+    const ownedIds = list.map((canvas) => canvas.id);
+    const sharedOwnedIdSet = new Set<string>();
+    if (ownedIds.length) {
+      const { data: shareRows, error: shareErr, status: shareStatus } = await supabase
+        .from('shared_canvases')
+        .select('canvas_id,access_level')
+        .in('canvas_id', ownedIds);
+
+      if (!shareErr && Array.isArray(shareRows)) {
+        shareRows.forEach((row: any) => {
+          const id = String(row?.canvas_id || '').trim();
+          const level = String(row?.access_level || '').toLowerCase();
+          if (id && (level === 'viewer' || level === 'editor')) {
+            sharedOwnedIdSet.add(id);
+          }
+        });
+      } else if (shareStatus === 401 || shareStatus === 403) {
+        warnPermissionIssue();
+      }
+    }
+
+    const firstOwnedPrivateByQuery = list.find((canvas) => !sharedOwnedIdSet.has(canvas.id));
+    const first = firstOwnedPrivateFromAccess || firstOwnedPrivateByQuery || list[0];
     const guestSnapshot = readGuestSnapshot();
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
 
@@ -842,32 +939,19 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         }
       }
     } else {
-      const canvasName = createDefaultCanvasRouteName();
-      const newCanvas = await insertCanvasWithRetry(userId, canvasName, undefined, true);
-      if (newCanvas) {
-        canvasIdRef.current = newCanvas.id;
-        currentCanvasIdRef.current = newCanvas.id;
-        setCurrentCanvasId(newCanvas.id);
-        writeLastOpenedCanvasId(userId, newCanvas.id);
+      const bootstrapCanvas = await ensureSingleBootstrapCanvas(userId);
+      if (bootstrapCanvas?.id) {
+        canvasIdRef.current = bootstrapCanvas.id;
+        currentCanvasIdRef.current = bootstrapCanvas.id;
+        setCurrentCanvasId(bootstrapCanvas.id);
+        writeLastOpenedCanvasId(userId, bootstrapCanvas.id);
         await refreshAllCanvasCollections(userId);
-        await loadCanvasById(newCanvas.id, userId);
-      } else {
-        // Last-resort fallback for fresh accounts so login always lands on a valid page.
-        const forcedName = `untitled-${Date.now()}/page-1.cnvs`;
-        const forcedCanvas = await insertCanvasWithRetry(userId, forcedName, undefined, false);
-        if (forcedCanvas?.id) {
-          canvasIdRef.current = forcedCanvas.id;
-          currentCanvasIdRef.current = forcedCanvas.id;
-          setCurrentCanvasId(forcedCanvas.id);
-          writeLastOpenedCanvasId(userId, forcedCanvas.id);
-          await refreshAllCanvasCollections(userId);
-          await loadCanvasById(forcedCanvas.id, userId);
-        }
+        await loadCanvasById(bootstrapCanvas.id, userId);
       }
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
-  }, [loadCanvasById, refreshAllCanvasCollections]);
+  }, [ensureSingleBootstrapCanvas, loadCanvasById, refreshAllCanvasCollections, warnPermissionIssue]);
 
   const createCanvas = useCallback(async (name?: string) => {
     if (!enabled || !session?.user?.id) return;
@@ -1042,7 +1126,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
   const flushPendingCanvasSync = useCallback(async () => {
     if (!session?.user?.id) return;
-    if (isFlushingRemoteRef.current) return;
+    if (isFlushingRemoteRef.current) {
+      flushRetryRequestedRef.current = true;
+      return;
+    }
 
     const userId = session.user.id;
     const inMemoryPending = Object.values(pendingSyncCacheRef.current)
@@ -1077,8 +1164,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     let errorCount = 0;
     try {
       for (const pending of pendingEntries) {
-        if (!canWriteCanvas(pending.canvasId)) {
-          // Keep pending snapshot for retry; access map can lag right after switch.
+        const hasKnownWriteAccess = canWriteCanvas(pending.canvasId);
+        if (hasKnownWriteAccess) {
+          blockedWriteCanvasIdsRef.current.delete(pending.canvasId);
+        }
+
+        if (blockedWriteCanvasIdsRef.current.has(pending.canvasId) && !hasKnownWriteAccess) {
+          // Keep pending snapshot for retry; role map can lag right after share/open.
           pendingSyncCacheRef.current[pending.canvasId] = pending;
           writePendingCanvasSync(pending);
           continue;
@@ -1122,6 +1214,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
           errorCount += 1;
           if (isPermissionDeniedError(error)) {
             warnPermissionIssue();
+            blockedWriteCanvasIdsRef.current.add(pending.canvasId);
             // Keep pending data; permission can recover after share/role sync.
             pendingSyncCacheRef.current[pending.canvasId] = pending;
             writePendingCanvasSync(pending);
@@ -1143,6 +1236,12 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       });
     } finally {
       isFlushingRemoteRef.current = false;
+      if (flushRetryRequestedRef.current) {
+        flushRetryRequestedRef.current = false;
+        window.setTimeout(() => {
+          void flushPendingCanvasSync();
+        }, 0);
+      }
     }
   }, [canWriteCanvas, session?.user?.id, warnPermissionIssue]);
 
@@ -1246,18 +1345,27 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       const { blocks, pan, zoom, drawingElements } = useCanvasStore.getState();
       const canvasId = canvasIdRef.current;
       if (!canvasId) return;
-      if (!canWriteCanvas(canvasId)) return;
+      if (blockedWriteCanvasIdsRef.current.has(canvasId) && !canWriteCanvas(canvasId)) return;
+
+      const blocksPayload = JSON.parse(JSON.stringify(blocks)) as CanvasBlock[];
+      const drawingsPayload = JSON.parse(JSON.stringify(drawingElements)) as DrawingElement[];
+      const signature = JSON.stringify([blocksPayload, drawingsPayload, pan.x, pan.y, zoom]);
+      if (lastQueuedSignatureByCanvasRef.current[canvasId] === signature) {
+        return;
+      }
 
       pendingSyncCacheRef.current[canvasId] = {
         userId: session.user.id,
         canvasId,
-        blocks: blocks as CanvasBlock[],
-        drawings: drawingElements as DrawingElement[],
+        blocks: blocksPayload,
+        drawings: drawingsPayload,
         pan,
         zoom,
         queuedAtMs: Date.now(),
         updatedAt: new Date().toISOString(),
+        signature,
       };
+      lastQueuedSignatureByCanvasRef.current[canvasId] = signature;
 
       // Push to DB shortly after user pauses input; do not wait for 60s interval.
       if (flushSoonTimeoutRef.current) {
@@ -1266,8 +1374,8 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       flushSoonTimeoutRef.current = setTimeout(() => {
         flushSoonTimeoutRef.current = undefined;
         void flushPendingCanvasSync();
-      }, 1200);
-    }, 320);
+      }, 240);
+    }, 120);
   }, [canWriteCanvas, flushPendingCanvasSync, session]);
 
   const saveGuestCanvas = useCallback(() => {
@@ -1421,6 +1529,35 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('cnvs-share-access-updated', onShareAccessUpdated as EventListener);
+    };
+  }, [enabled, refreshAllCanvasCollectionsThrottled, session?.user?.id]);
+
+  useEffect(() => {
+    if (!enabled || !session?.user?.id) return;
+
+    const userId = session.user.id;
+    let disposed = false;
+
+    const triggerRefresh = () => {
+      if (disposed) return;
+      if (document.visibilityState !== 'visible') return;
+      if (isLoadingRef.current) return;
+      void refreshAllCanvasCollectionsThrottled(userId, {
+        force: true,
+        minGapMs: 800,
+      });
+    };
+
+    const channel = supabase
+      .channel(`cnvs-sync-live-${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'canvases' }, triggerRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shared_canvases' }, triggerRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'canvas_permissions' }, triggerRefresh)
+      .subscribe();
+
+    return () => {
+      disposed = true;
+      void supabase.removeChannel(channel);
     };
   }, [enabled, refreshAllCanvasCollectionsThrottled, session?.user?.id]);
 

@@ -270,10 +270,14 @@ export function useCanvasCollaboration(
       return;
     }
 
-    if (identity?.id) {
-      applyStoredSnapshotForUser(identity.id);
-    }
-  }, [applyStoredSnapshotForUser, identity?.id]);
+    const state = useCanvasStore.getState();
+    applyRemoteRef.current = true;
+    useCanvasStore.getState().applyRemoteSnapshot([], state.pan, state.zoom, []);
+    lastAppliedSnapshotUserIdRef.current = null;
+    window.setTimeout(() => {
+      applyRemoteRef.current = false;
+    }, 0);
+  }, [applyStoredSnapshotForUser]);
 
   const syncCurrentSnapshotToRoom = useCallback(() => {
     if (!connectedRef.current || !identity?.id) return;
@@ -664,6 +668,7 @@ export function useCanvasCollaboration(
 
   const toggleUserVisibility = useCallback((userId: string) => {
     const willShow = visibilityRef.current[userId] === false;
+    const isCurrentlyAppliedUser = lastAppliedSnapshotUserIdRef.current === userId;
     setVisibilityMap((prev) => ({
       ...prev,
       [userId]: prev[userId] === false,
@@ -680,6 +685,10 @@ export function useCanvasCollaboration(
     window.setTimeout(() => {
       if (willShow) {
         applyStoredSnapshotForUser(userId);
+        return;
+      }
+
+      if (!isCurrentlyAppliedUser) {
         return;
       }
 

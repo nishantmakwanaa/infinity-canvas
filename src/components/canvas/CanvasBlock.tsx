@@ -5,6 +5,7 @@ import { LinkBlock } from './blocks/LinkBlock';
 import { TodoBlock } from './blocks/TodoBlock';
 import { MediaBlock } from './blocks/MediaBlock';
 import { X } from 'lucide-react';
+import { getBlockForegroundColor, getBlockMutedColor } from '@/lib/blockColors';
 
 interface Props {
   block: CanvasBlock;
@@ -75,6 +76,8 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
   };
 
   const typeLabel = block.type === 'media' ? 'media' : block.type;
+  const foregroundColor = getBlockForegroundColor(block.backgroundColor);
+  const mutedColor = getBlockMutedColor(block.backgroundColor);
 
   return (
     <div
@@ -92,9 +95,13 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
       onMouseLeave={() => setIsHovered(false)}
     >
       <div className={`flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 ${readOnly ? '' : 'cursor-move'}`}>
-        <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">{typeLabel}</span>
+        <span className="text-[10px] font-mono uppercase tracking-widest" style={{ color: mutedColor || undefined }}>{typeLabel}</span>
         {!readOnly && (
-          <button onClick={(e) => { e.stopPropagation(); deleteBlock(block.id); }} className="text-muted-foreground hover:text-foreground transition-colors">
+          <button
+            onClick={(e) => { e.stopPropagation(); deleteBlock(block.id); }}
+            className="transition-colors"
+            style={{ color: mutedColor || foregroundColor || undefined }}
+          >
             <X size={12} />
           </button>
         )}
