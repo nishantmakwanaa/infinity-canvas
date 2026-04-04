@@ -11,7 +11,11 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "loadtest": "node scripts/loadtest-core.mjs",
+    "loadtest:open": "node scripts/loadtest-core.mjs --scenario open",
+    "loadtest:draw": "node scripts/loadtest-core.mjs --scenario draw",
+    "loadtest:autosave": "node scripts/loadtest-core.mjs --scenario autosave"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

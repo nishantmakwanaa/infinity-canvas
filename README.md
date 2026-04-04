@@ -76,6 +76,64 @@ Default dev server: `http://localhost:8080`
 - `npm run lint`: lint project
 - `npm run test`: run unit tests once
 - `npm run test:watch`: watch mode tests
+- `npm run loadtest`: run all core load scenarios (RPC open-page + draw burst + autosave flush)
+- `npm run loadtest:open`: run resolver/open-page load scenario only
+- `npm run loadtest:draw`: run drawing write burst scenario only
+- `npm run loadtest:autosave`: run autosave flush write scenario only
+
+## Performance Telemetry
+
+Lightweight client telemetry is now built in for production diagnostics:
+
+- Render commit timing markers (`render_commit`)
+- Dropped-frame markers from RAF loop (`dropped_frame`)
+- Autosave flush telemetry (`autosave_flush_success`, `autosave_flush_error`, `autosave_flush_batch`)
+
+Telemetry is stored in-memory at `window.__cnvsPerf.events`.
+
+Optional console logging:
+
+```js
+localStorage.setItem('cnvs_perf_console', '1')
+```
+
+Disable verbose logging:
+
+```js
+localStorage.removeItem('cnvs_perf_console')
+```
+
+## Load Test Configuration
+
+Load tests are designed for pre-release throughput checks on a dedicated test canvas.
+
+Required env vars:
+
+```bash
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVICE_ROLE_KEY
+LOADTEST_USER_TOKEN=<userToken from URL>
+LOADTEST_CANVAS_TOKEN=<canvasToken from URL>
+LOADTEST_PAGE_TOKEN=<pageToken from URL>
+```
+
+For mutation scenarios (`draw`, `autosave`, or `all`):
+
+```bash
+LOADTEST_ALLOW_MUTATIONS=1
+LOADTEST_CANVAS_ID=<test-canvas-uuid>
+# Optional: extra owner filter
+LOADTEST_OWNER_USER_ID=<owner-user-uuid>
+```
+
+Optional tuning:
+
+```bash
+LOADTEST_ITERATIONS=240
+LOADTEST_CONCURRENCY=16
+LOADTEST_DRAW_POINTS=24
+LOADTEST_AUTOSAVE_BURST=10
+```
 
 ## Supabase Setup
 

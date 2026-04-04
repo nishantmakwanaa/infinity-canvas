@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useCanvasStore, CanvasBlock, DrawingElement } from '@/store/canvasStore';
 import type { Session } from '@supabase/supabase-js';
 import { createDefaultCanvasRouteName, parseCanvasRouteName, toCanvasRouteName } from '@/lib/canvasNaming';
+import { recordPerfMetric } from '@/lib/perfTelemetry';
 import { toast } from 'sonner';
 
 export interface CanvasMeta {
@@ -30,6 +31,7 @@ interface PendingCanvasSyncSnapshot extends LocalCanvasSnapshot {
   canvasId: string;
   userId: string;
   updatedAt: string;
+  queuedAtMs?: number;
   signature?: string;
 }
 
@@ -451,8 +453,12 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     if (!pendingEntries.length) return;
 
     isFlushingRemoteRef.current = true;
+    const batchStart = performance.now();
+    let successCount = 0;
+    let errorCount = 0;
     try {
       for (const pending of pendingEntries) {
+        const requestStart = performance.now();
         const { error } = await supabase
           .from('canvases')
           .update({
@@ -465,7 +471,16 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
           .eq('id', pending.canvasId)
           .eq('user_id', userId);
 
+        const requestDurationMs = performance.now() - requestStart;
+        const queuedAtMs = typeof pending.queuedAtMs === 'number'
+          ? pending.queuedAtMs
+          : Date.parse(pending.updatedAt);
+        const queueDelayMs = Number.isFinite(queuedAtMs)
+          ? Math.max(0, Date.now() - queuedAtMs)
+          : 0;
+
         if (!error) {
+          successCount += 1;
           delete pendingSyncCacheRef.current[pending.canvasId];
           removePendingCanvasSync(pendingCanvasSyncKey(userId, pending.canvasId));
           setCanvases((prev) => prev.map((c) => (
@@ -473,12 +488,27 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
               ? { ...c, updated_at: pending.updatedAt }
               : c
           )));
+          recordPerfMetric('autosave_flush_success', requestDurationMs, {
+            queue_delay_ms: Math.round(queueDelayMs),
+            blocks: pending.blocks.length,
+            drawings: pending.drawings.length,
+          });
         } else {
+          errorCount += 1;
           // Persist failed network sync for retry across reloads.
           pendingSyncCacheRef.current[pending.canvasId] = pending;
           writePendingCanvasSync(pending);
+          recordPerfMetric('autosave_flush_error', requestDurationMs, {
+            queue_delay_ms: Math.round(queueDelayMs),
+            message: error.message || 'unknown',
+          });
         }
       }
+      recordPerfMetric('autosave_flush_batch', performance.now() - batchStart, {
+        size: pendingEntries.length,
+        success: successCount,
+        error: errorCount,
+      });
     } finally {
       isFlushingRemoteRef.current = false;
     }
@@ -592,6 +622,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         drawings: drawingElements as DrawingElement[],
         pan,
         zoom,
+        queuedAtMs: Date.now(),
         updatedAt: new Date().toISOString(),
       };
     }, 320);
@@ -650,7 +681,15 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
   useEffect(() => {
     if (!enabled || !session?.user?.id) return;
-    const unsub = useCanvasStore.subscribe(() => {
+    const unsub = useCanvasStore.subscribe((state, prevState) => {
+      if (
+        state.blocks === prevState.blocks &&
+        state.drawingElements === prevState.drawingElements &&
+        state.pan === prevState.pan &&
+        state.zoom === prevState.zoom
+      ) {
+        return;
+      }
       saveCanvas();
     });
     return () => unsub();
@@ -689,7 +728,15 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
   useEffect(() => {
     if (!enabled || session?.user?.id) return;
-    const unsub = useCanvasStore.subscribe(() => {
+    const unsub = useCanvasStore.subscribe((state, prevState) => {
+      if (
+        state.blocks === prevState.blocks &&
+        state.drawingElements === prevState.drawingElements &&
+        state.pan === prevState.pan &&
+        state.zoom === prevState.zoom
+      ) {
+        return;
+      }
       saveGuestCanvas();
     });
     return () => unsub();

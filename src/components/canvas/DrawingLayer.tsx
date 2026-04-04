@@ -120,7 +120,7 @@ function shapePath(type: string, x: number, y: number, w: number, h: number): st
   }
 }
 
-function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement; onDelete?: (id: string) => void }) {
+const DrawingElementRenderer = React.memo(function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement; onDelete?: (id: string) => void }) {
   const eraseProps = onDelete
     ? {
         onPointerDown: (event: React.PointerEvent<SVGElement>) => {
@@ -216,10 +216,15 @@ function DrawingElementRenderer({ element, onDelete }: { element: DrawingElement
       );
     }
   }
-}
+}, (prev, next) => prev.element === next.element && prev.onDelete === next.onDelete);
 
 export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
-  const { drawingElements, activeTool, toolSettings, pan, zoom, addDrawingElement } = useCanvasStore();
+  const drawingElements = useCanvasStore((s) => s.drawingElements);
+  const activeTool = useCanvasStore((s) => s.activeTool);
+  const toolSettings = useCanvasStore((s) => s.toolSettings);
+  const pan = useCanvasStore((s) => s.pan);
+  const zoom = useCanvasStore((s) => s.zoom);
+  const addDrawingElement = useCanvasStore((s) => s.addDrawingElement);
   const supportsPointerEvents = typeof window !== 'undefined' && 'PointerEvent' in window;
   const [currentPath, setCurrentPath] = useState<{ x: number; y: number }[]>([]);
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);

@@ -14,7 +14,12 @@ interface Props {
 type ResizeDir = 'n' | 's' | 'e' | 'w';
 
 function CanvasBlockComponentImpl({ block, readOnly }: Props) {
-  const { updateBlock, deleteBlock, selectBlock, selectedBlockId, selectedBlockIds, zoom } = useCanvasStore();
+  const updateBlock = useCanvasStore((s) => s.updateBlock);
+  const deleteBlock = useCanvasStore((s) => s.deleteBlock);
+  const selectBlock = useCanvasStore((s) => s.selectBlock);
+  const selectedBlockId = useCanvasStore((s) => s.selectedBlockId);
+  const selectedBlockIds = useCanvasStore((s) => s.selectedBlockIds);
+  const zoom = useCanvasStore((s) => s.zoom);
   const isSelected = selectedBlockId === block.id || selectedBlockIds.includes(block.id);
   const [isHovered, setIsHovered] = useState(false);
   const dragRef = useRef({ dragging: false, startX: 0, startY: 0, origX: 0, origY: 0 });

@@ -6,13 +6,14 @@ import { CanvasSidebar } from '@/components/canvas/CanvasSidebar';
 import { setThemePreference, useThemeTime } from '@/hooks/useThemeTime';
 import { useAuth } from '@/hooks/useAuth';
 import { useCanvasSync } from '@/hooks/useCanvasSync';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Profiler, useCallback, useEffect, useMemo, useRef, useState, type ProfilerOnRenderCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useCanvasStore } from '@/store/canvasStore';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { getPageNumber, nextPageSlug, parseCanvasRouteName } from '@/lib/canvasNaming';
 import { parseSegmentedApiRequest, toOwnerPagePath } from '@/lib/pageApi';
+import { recordPerfMetric, startDroppedFrameMonitor } from '@/lib/perfTelemetry';
 import { supabase } from '@/integrations/supabase/client';
 import { useLocation } from 'react-router-dom';
 
@@ -211,6 +212,14 @@ const Index = () => {
     void createCanvas(`${currentParsedName.canvasSlug}/${nextPage}`);
   };
 
+  const onCanvasProfilerRender = useCallback<ProfilerOnRenderCallback>((_id, phase, actualDuration, baseDuration) => {
+    if (phase === 'update' && actualDuration < 3) return;
+    recordPerfMetric('render_commit', actualDuration, {
+      phase,
+      base_duration_ms: Number(baseDuration.toFixed(2)),
+    });
+  }, []);
+
   useEffect(() => {
     if (!rawUserToken) {
       setRouteMode('home');
@@ -336,8 +345,22 @@ const Index = () => {
     lastSnapshotRef.current = cloneSnapshot(initialSnapshot);
     lastSerializedSnapshotRef.current = JSON.stringify(initialSnapshot);
 
-    const unsubscribe = useCanvasStore.subscribe(() => {
-      const nextSnapshot = getSnapshotFromStore();
+    const unsubscribe = useCanvasStore.subscribe((state, prevState) => {
+      if (
+        state.blocks === prevState.blocks &&
+        state.drawingElements === prevState.drawingElements &&
+        state.pan === prevState.pan &&
+        state.zoom === prevState.zoom
+      ) {
+        return;
+      }
+
+      const nextSnapshot = {
+        blocks: state.blocks,
+        drawings: state.drawingElements,
+        pan: state.pan,
+        zoom: state.zoom,
+      } as CanvasSnapshot;
       const serialized = JSON.stringify(nextSnapshot);
 
       if (serialized === lastSerializedSnapshotRef.current) return;
@@ -460,6 +483,10 @@ const Index = () => {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [effectiveCanvasLoading, isEditorMode]);
 
+  useEffect(() => {
+    return startDroppedFrameMonitor();
+  }, []);
+
   if (isNotFoundMode) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-background">
@@ -481,11 +508,13 @@ const Index = () => {
 
   return (
     <>
-      <InfiniteCanvas
-        readOnly={isReadOnlyMode}
-        leftOffsetPercent={canvasLeftOffsetPercent}
-        loading={effectiveCanvasLoading}
-      />
+      <Profiler id="infinite-canvas" onRender={onCanvasProfilerRender}>
+        <InfiniteCanvas
+          readOnly={isReadOnlyMode}
+          leftOffsetPercent={canvasLeftOffsetPercent}
+          loading={effectiveCanvasLoading}
+        />
+      </Profiler>
 
       {isReadOnlyMode && (
         <div className="fixed top-4 left-4 z-50 flex items-center gap-2">
