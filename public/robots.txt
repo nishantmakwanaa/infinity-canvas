@@ -12,3 +12,5 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+Sitemap: https://canvas.nishantmakwana.tech/sitemap.xml

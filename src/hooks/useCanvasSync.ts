@@ -239,6 +239,8 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const flushRetryRequestedRef = useRef(false);
   const isLoadingRef = useRef(false);
   const loadSeqRef = useRef(0);
+  const autoLoadInFlightUserIdRef = useRef<string | null>(null);
+  const lastAutoLoadAtByUserRef = useRef<Record<string, number>>({});
   const collectionsRefreshInFlightRef = useRef(false);
   const lastCollectionsRefreshAtRef = useRef(0);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
@@ -581,12 +583,12 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
 
     if (lockHeldByAnother) {
-      for (let attempt = 0; attempt < 5; attempt += 1) {
+      for (let attempt = 0; attempt < 10; attempt += 1) {
         const existingOwned = await refreshCanvases(userId);
         if (Array.isArray(existingOwned) && existingOwned.length) {
           return existingOwned[0];
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 160));
+        await new Promise((resolve) => window.setTimeout(resolve, 220));
       }
       return null;
     }
@@ -635,12 +637,19 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     })();
 
     bootstrapCreatePromiseByUserRef.current[userId] = promise;
+    let bootstrapResult: CanvasMeta | null = null;
     try {
-      return await promise;
+      bootstrapResult = await promise;
+      return bootstrapResult;
     } finally {
       delete bootstrapCreatePromiseByUserRef.current[userId];
       try {
-        sessionStorage.removeItem(bootstrapLockKey);
+        if (bootstrapResult?.id) {
+          // Keep lock timestamp for a short window so duplicate startup effects cannot double-create.
+          sessionStorage.setItem(bootstrapLockKey, String(Date.now()));
+        } else {
+          sessionStorage.removeItem(bootstrapLockKey);
+        }
       } catch {
         // Ignore storage access errors.
       }
@@ -1436,10 +1445,30 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     blockedWriteCanvasIdsRef.current.clear();
 
     if (session?.user?.id) {
-      void loadCanvas(session.user.id).catch(() => {
-        setIsCanvasLoading(false);
-      });
+      const userId = session.user.id;
+      const now = Date.now();
+      const lastAt = lastAutoLoadAtByUserRef.current[userId] || 0;
+
+      // Dedupe immediate effect reruns (including StrictMode/dev remount behavior).
+      if (autoLoadInFlightUserIdRef.current === userId || now - lastAt < 800) {
+        return;
+      }
+
+      autoLoadInFlightUserIdRef.current = userId;
+      lastAutoLoadAtByUserRef.current[userId] = now;
+
+      void loadCanvas(userId)
+        .catch(() => {
+          setIsCanvasLoading(false);
+        })
+        .finally(() => {
+          if (autoLoadInFlightUserIdRef.current === userId) {
+            autoLoadInFlightUserIdRef.current = null;
+          }
+          lastAutoLoadAtByUserRef.current[userId] = Date.now();
+        });
     } else {
+      autoLoadInFlightUserIdRef.current = null;
       canvasIdRef.current = null;
       currentCanvasIdRef.current = null;
       setCurrentCanvasId(null);

@@ -22,7 +22,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useLocation } from 'react-router-dom';
 
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
-const DEFAULT_SITE_TITLE = 'CNVS - Your Second Brain Canvas';
+const DEFAULT_SITE_TITLE = 'CNVS | Infinite Canvas Workspace for Teams';
 
 type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found' | 'auth-required';
 
@@ -623,7 +623,7 @@ const Index = () => {
       document.title = DEFAULT_SITE_TITLE;
       return;
     }
-    document.title = `CNVS : ${currentParsedName.canvasLabel} - ${currentParsedName.pageLabel}`;
+    document.title = `CNVS | ${currentParsedName.canvasLabel} - ${currentParsedName.pageLabel}`;
   }, [activeCanvasName, currentParsedName.canvasLabel, currentParsedName.pageLabel, isEditorMode, isLoggedIn, user]);
 
   useEffect(() => {
@@ -930,12 +930,12 @@ const Index = () => {
             className="fixed right-0 z-50 px-1 py-2 bg-transparent border border-border border-r-0 select-none pointer-events-none"
             style={{ bottom: 'calc(1rem + 44px)' }}
           >
-            <span className="block text-[9px] font-mono font-bold text-foreground [writing-mode:vertical-rl] tracking-wider">MADE BY NISHANT</span>
+            <span className="block text-[8px] font-mono font-bold text-foreground [writing-mode:vertical-rl] tracking-wider">CNVS © 2026 NISHANT MAKWANA</span>
           </div>
         ) : (
           <div className="fixed bottom-4 right-4 z-50 px-3 py-1.5 bg-transparent border border-border select-none pointer-events-none">
-            <span className="text-[9px] font-mono text-muted-foreground block leading-tight">MADE BY</span>
-            <span className="text-[11px] font-mono font-bold text-foreground block leading-tight">NISHANT</span>
+            <span className="text-[9px] font-mono text-muted-foreground block leading-tight">CNVS</span>
+            <span className="text-[10px] font-mono font-bold text-foreground block leading-tight">© 2026 Nishant Makwana</span>
           </div>
         )
       )}

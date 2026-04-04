@@ -1,7 +1,7 @@
-# CNVS - Infinite Canvas Workspace
+# CNVS - Infinite Canvas Workspace for Teams
 
 CNVS is a collaborative, page-based infinite canvas for organizing notes, links, todos, media, and sketches in one visual workspace.
-It is positioned as an alternative and competitor to tldraw.com for teams that want persistent, permissioned, page-aware canvases backed by Supabase.
+It is designed for persistent team knowledge maps with real-time collaboration, permissioned sharing, and structured page groups.
 
 It supports:
 - Tokenized page API routes ending in `.page`
@@ -32,13 +32,20 @@ The app is built with React + TypeScript + Vite and uses Supabase for auth, pers
 
 ## Product Positioning (SEO Copy)
 
-CNVS is a collaborative infinite whiteboard app for individuals and teams who need a practical alternative to tldraw.com.
+CNVS is an infinite canvas workspace for teams that need long-lived visual documentation, not just temporary sketch sessions.
 
-- Build persistent knowledge canvases (not just temporary sketches)
+- Build persistent knowledge canvases
 - Organize work into page-based canvas groups
 - Share with viewer/editor permissions
 - Collaborate live with presence and activity controls
 - Mix notes, links, todos, media, and freehand drawing in one workspace
+
+## Branding
+
+- Product name: CNVS
+- Headline: Infinite Canvas Workspace for Teams
+- Owner: Nishant Makwana
+- Official URL: https://canvas.nishantmakwana.tech
 
 ## Tech Stack
 
@@ -228,14 +235,17 @@ Display labels are formatted for UI, while routes remain slug-based.
 
 ## Keyboard Shortcuts
 
-CNVS uses `Alt + Shift` combinations to avoid default browser conflicts.
+CNVS supports direct keyboard shortcuts and ignores single-letter shortcuts while typing in input/editable fields.
 
 Examples:
-- `Alt+Shift+Z`: Undo
-- `Alt+Shift+Y`: Redo
-- `Alt+Shift+C`: Copy selected block(s)
-- `Alt+Shift+K`: Cut selected block(s)
-- `Alt+Shift+Delete`: Delete selected block(s)
+- `Ctrl+Z`: Undo
+- `Ctrl+Y`: Redo
+- `Ctrl+C`: Copy selected block(s)
+- `Ctrl+X`: Cut selected block(s)
+- `Delete / Backspace`: Delete selected block(s)
+- `S`: Select tool
+- `H`: Hand tool
+- `Ctrl+Alt`: Open shortcuts dialog
 
 Open in-app shortcut help from the top-right menu.
 
@@ -287,4 +297,6 @@ Important for tokenized routes and shared links:
 
 ## License
 
-Private/internal project unless otherwise specified by repository owner.
+Copyright (c) 2026 Nishant Makwana. All Rights Reserved.
+
+This repository is proprietary software. See [LICENSE](LICENSE) for full terms.

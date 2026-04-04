@@ -37,12 +37,12 @@ export function AuthGateDialog({
           </div>
           <div>
             <div className="text-base font-mono font-semibold text-foreground">CNVS</div>
-            <div className="text-[11px] font-mono text-muted-foreground">Your second-brain canvas</div>
+            <div className="text-[11px] font-mono text-muted-foreground">Infinite canvas workspace for teams</div>
           </div>
         </div>
 
         <p className="text-xs font-mono text-muted-foreground">
-          Infinite pages for notes, drawings, and live collaboration with your team.
+          Organize notes, drawings, links, and media in shared multi-page canvases.
         </p>
 
         <p className="text-xs font-mono text-foreground border border-border bg-card/70 px-3 py-2">

@@ -27,7 +27,7 @@ export default function Manual() {
         <section className="mb-10">
           <h2 className="text-xl font-semibold font-mono mb-3">Introduction</h2>
           <p className="text-sm text-muted-foreground leading-relaxed font-mono">
-            Welcome to the CNVS user manual. Here you can learn about using CNVS, find answers to questions, and refer to our legal documents.
+            Welcome to the CNVS user manual. Learn how to use the product, review policies, and find official project resources.
           </p>
           <p className="text-sm text-muted-foreground leading-relaxed font-mono mt-2">
             Visit{' '}
@@ -49,7 +49,7 @@ export default function Manual() {
           <h2 className="text-xl font-semibold font-mono mb-3">Documents</h2>
           <ul className="space-y-2 text-sm font-mono text-muted-foreground">
             <li className="leading-relaxed">
-              Legal summary: This project is owned by Nishant Makwana. Do not copy, reupload, or redistribute this project or its source code without explicit permission.
+              Legal summary: CNVS and its source code are Copyright 2026 Nishant Makwana. All Rights Reserved. See the LICENSE file in the repository root for full terms.
             </li>
           </ul>
         </section>

@@ -371,6 +371,15 @@ export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
 
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!isActive) return;
+
+    if (e.pointerType === 'touch' && !e.isPrimary) {
+      // A second touch indicates pinch intent. Stop any active stroke so canvas pinch zoom can take over.
+      if (isDrawing.current) {
+        finalizeDrawing();
+      }
+      return;
+    }
+
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const pos = toCanvasFromClient(e.clientX, e.clientY);
     const capturesPointer = activeTool === 'pencil' || activeTool === 'shape' || activeTool === 'line' || activeTool === 'arrow' || activeTool === 'eraser';
@@ -466,6 +475,12 @@ export function DrawingLayer({ readOnly }: { readOnly?: boolean }) {
 
   const handleTouchStartFallback = (e: React.TouchEvent<SVGSVGElement>) => {
     if (supportsPointerEvents) return;
+    if (e.touches.length >= 2) {
+      if (isDrawing.current) {
+        finalizeDrawing();
+      }
+      return;
+    }
     if (!isActive || e.touches.length !== 1) return;
 
     const t = e.touches[0];

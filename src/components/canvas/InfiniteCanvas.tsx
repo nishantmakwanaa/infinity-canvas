@@ -25,8 +25,8 @@ interface Props {
 
 const DRAWING_TOOLS = ['pencil', 'eraser', 'text', 'shape', 'line', 'arrow'];
 const MEDIA_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'svg', 'gif', 'apng', 'bmp', 'ico', 'heic', 'heif', 'heiv', 'tif', 'tiff', 'jfif'];
-const MEDIA_VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'm3u8', 'm4v', 'avi', 'wmv', 'flv', 'mkv', '3gp', 'ts', 'mts', 'm2ts', 'gifv'];
-const MEDIA_AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'oga', 'opus', 'aiff', 'alac', 'amr', 'wma'];
+const MEDIA_VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogv', 'mov', 'm3u8', 'm4v', 'avi', 'wmv', 'flv', 'mkv', '3gp', 'ts', 'mts', 'm2ts', 'gifv'];
+const MEDIA_AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'oga', 'ogg', 'opus', 'aiff', 'alac', 'amr', 'wma', 'weba', 'mpga', 'mid', 'midi'];
 
 function extensionFromUrl(rawUrl: string) {
   const cleaned = rawUrl.split('#')[0].split('?')[0];
@@ -260,7 +260,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    if (loading || isDrawing) return;
+    if (loading) return;
     const bounds = containerRef.current?.getBoundingClientRect();
     const left = bounds?.left || 0;
     const top = bounds?.top || 0;
@@ -285,6 +285,8 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       e.preventDefault();
       return;
     }
+
+    if (isDrawing) return;
 
     if (e.touches.length !== 1) return;
 
@@ -346,9 +348,18 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     state.setPan({ x: state.pan.x + dx, y: state.pan.y + dy });
   };
 
-  const handleTouchEnd = () => {
-    isTouchPanning.current = false;
-    isTouchPinching.current = false;
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      isTouchPinching.current = false;
+      isTouchPanning.current = true;
+      lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      return;
+    }
+
+    if (e.touches.length === 0) {
+      isTouchPanning.current = false;
+      isTouchPinching.current = false;
+    }
   };
 
   const dotOffset = {
@@ -645,7 +656,8 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       style={{
         ...dotOffset,
         left: `${leftOffsetPercent}%`,
-        touchAction: isDrawing || isHandTool ? 'none' : 'pan-x pan-y pinch-zoom',
+        // Prevent browser-level zoom/scroll gestures so pinch is dedicated to canvas zoom.
+        touchAction: 'none',
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

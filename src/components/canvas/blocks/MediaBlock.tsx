@@ -11,8 +11,8 @@ function normalizeUrl(raw: string) {
 }
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'svg', 'gif', 'apng', 'bmp', 'ico', 'heic', 'heif', 'heiv', 'tif', 'tiff', 'jfif'];
-const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'm3u8', 'm4v', 'avi', 'wmv', 'flv', 'mkv', '3gp', 'ts', 'mts', 'm2ts', 'gifv'];
-const AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'oga', 'opus', 'aiff', 'alac', 'amr', 'wma'];
+const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogv', 'mov', 'm3u8', 'm4v', 'avi', 'wmv', 'flv', 'mkv', '3gp', 'ts', 'mts', 'm2ts', 'gifv'];
+const AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'oga', 'ogg', 'opus', 'aiff', 'alac', 'amr', 'wma', 'weba', 'mpga', 'mid', 'midi'];
 
 function extFromUrl(url: string) {
   const cleaned = url.split('#')[0].split('?')[0];
@@ -95,6 +95,21 @@ function toEmbedUrl(url: string) {
       if (activityMatch?.[1]) {
         return `https://www.linkedin.com/embed/feed/update/${encodeURIComponent(`urn:li:activity:${activityMatch[1]}`)}`;
       }
+    }
+
+    if (host.includes('open.spotify.com')) {
+      const parts = u.pathname.split('/').filter(Boolean);
+      if (parts.length >= 2) {
+        const type = parts[0];
+        const id = parts[1];
+        if (['track', 'album', 'playlist', 'episode', 'show', 'artist'].includes(type)) {
+          return `https://open.spotify.com/embed/${type}/${id}`;
+        }
+      }
+    }
+
+    if (host.includes('soundcloud.com')) {
+      return `https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=true`;
     }
   } catch {
     return '';
@@ -248,7 +263,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,video/*,audio/*,.gif,.png,.jpg,.jpeg,.webp,.svg,.heic,.heif,.heiv,.bmp,.tif,.tiff,.mp4,.webm,.mov,.m4v,.avi,.mkv,.ogg,.wmv,.flv,.3gp,.m3u8,.mp3,.wav,.aac,.flac,.m4a,.oga,.opus,.aiff,.alac,.amr,.wma"
+            accept="image/*,video/*,audio/*,.gif,.png,.jpg,.jpeg,.webp,.svg,.heic,.heif,.heiv,.bmp,.tif,.tiff,.mp4,.webm,.ogv,.mov,.m4v,.avi,.mkv,.wmv,.flv,.3gp,.m3u8,.mp3,.wav,.aac,.flac,.m4a,.oga,.ogg,.opus,.aiff,.alac,.amr,.wma,.weba,.mpga,.mid,.midi"
             className="hidden"
             onChange={handleFileUpload}
           />
