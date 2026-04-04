@@ -51,8 +51,9 @@ export function CanvasSidebar({
   const profileButtonRef = useRef<HTMLButtonElement>(null);
   const profilePanelRef = useRef<HTMLDivElement>(null);
 
-  const groupCanvasList = useCallback((source: CanvasMeta[]) => {
+  const groupCanvasList = useCallback((source: CanvasMeta[], splitById = false) => {
     const bySlug = new Map<string, {
+      groupKey: string;
       canvasSlug: string;
       canvasLabel: string;
       pages: Array<{ id: string; pageSlug: string; pageLabel: string; updatedAt: string }>;
@@ -61,11 +62,13 @@ export function CanvasSidebar({
 
     source.forEach((canvas) => {
       const parsed = parseCanvasRouteName(canvas.name);
-      const existing = bySlug.get(parsed.canvasSlug);
+      const groupKey = splitById ? canvas.id : parsed.canvasSlug;
+      const existing = bySlug.get(groupKey);
       const page = { id: canvas.id, pageSlug: parsed.pageSlug, pageLabel: parsed.pageLabel, updatedAt: canvas.updated_at };
 
       if (!existing) {
-        bySlug.set(parsed.canvasSlug, {
+        bySlug.set(groupKey, {
+          groupKey,
           canvasSlug: parsed.canvasSlug,
           canvasLabel: parsed.canvasLabel,
           pages: [page],
@@ -116,16 +119,9 @@ export function CanvasSidebar({
   const groupedOwnedAll = useMemo(() => groupCanvasList(canvases), [canvases, groupCanvasList]);
   const groupedOwnedSharedView = useMemo(() => groupCanvasList(ownedSharedViewCanvases), [groupCanvasList, ownedSharedViewCanvases]);
   const groupedOwnedSharedEdit = useMemo(() => groupCanvasList(ownedSharedEditCanvases), [groupCanvasList, ownedSharedEditCanvases]);
-  const groupedJoinedView = useMemo(() => groupCanvasList(joinedViewCanvases), [groupCanvasList, joinedViewCanvases]);
-  const groupedJoinedEdit = useMemo(() => groupCanvasList(joinedEditCanvases), [groupCanvasList, joinedEditCanvases]);
+  const groupedJoinedView = useMemo(() => groupCanvasList(joinedViewCanvases, true), [groupCanvasList, joinedViewCanvases]);
+  const groupedJoinedEdit = useMemo(() => groupCanvasList(joinedEditCanvases, true), [groupCanvasList, joinedEditCanvases]);
   const groupedOwnedPrivate = useMemo(() => groupCanvasList(ownedPrivateCanvases), [groupCanvasList, ownedPrivateCanvases]);
-
-  const currentCanvasGroupSlug = useMemo(() => {
-    if (!currentCanvasId) return null;
-    const currentCanvas = [...canvases, ...sharedCanvases].find((canvas) => canvas.id === currentCanvasId);
-    if (!currentCanvas) return null;
-    return parseCanvasRouteName(currentCanvas.name).canvasSlug;
-  }, [canvases, currentCanvasId, sharedCanvases]);
 
   const selectedIds = useMemo(() => {
     return Object.entries(selectedPages)
@@ -227,13 +223,13 @@ export function CanvasSidebar({
           <>
             <div className="px-1 pt-1 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Shared by me (view only)</div>
             {groupedOwnedSharedView.map((group) => {
-              const isCurrentGroup = group.canvasSlug === currentCanvasGroupSlug;
+              const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
               const groupPageIds = group.pages.map((page) => page.id);
               const selectedPagesInGroup = group.pages.filter((page) => Boolean(selectedPages[page.id]));
               const areAllPagesSelected = group.pages.length > 0 && selectedPagesInGroup.length === group.pages.length;
               const defaultPageId = group.pages[0]?.id;
               return (
-                <div key={`owned-shared-view-${group.canvasSlug}`} className="border border-border bg-card">
+                <div key={`owned-shared-view-${group.groupKey}`} className="border border-border bg-card">
                   <button
                     className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
                       isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
@@ -287,13 +283,13 @@ export function CanvasSidebar({
           <>
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Shared by me (edit)</div>
             {groupedOwnedSharedEdit.map((group) => {
-              const isCurrentGroup = group.canvasSlug === currentCanvasGroupSlug;
+              const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
               const groupPageIds = group.pages.map((page) => page.id);
               const selectedPagesInGroup = group.pages.filter((page) => Boolean(selectedPages[page.id]));
               const areAllPagesSelected = group.pages.length > 0 && selectedPagesInGroup.length === group.pages.length;
               const defaultPageId = group.pages[0]?.id;
               return (
-                <div key={`owned-shared-edit-${group.canvasSlug}`} className="border border-border bg-card">
+                <div key={`owned-shared-edit-${group.groupKey}`} className="border border-border bg-card">
                   <button
                     className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
                       isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
@@ -347,10 +343,10 @@ export function CanvasSidebar({
           <>
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Joined (view only)</div>
             {groupedJoinedView.map((group) => {
-              const isCurrentGroup = group.canvasSlug === currentCanvasGroupSlug;
+              const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
               const defaultPageId = group.pages[0]?.id;
               return (
-                <div key={`joined-view-${group.canvasSlug}`} className="border border-border bg-card/70">
+                <div key={`joined-view-${group.groupKey}`} className="border border-border bg-card/70">
                   <button
                     className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
                       isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
@@ -374,10 +370,10 @@ export function CanvasSidebar({
           <>
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Joined (edit)</div>
             {groupedJoinedEdit.map((group) => {
-              const isCurrentGroup = group.canvasSlug === currentCanvasGroupSlug;
+              const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
               const defaultPageId = group.pages[0]?.id;
               return (
-                <div key={`joined-edit-${group.canvasSlug}`} className="border border-border bg-card/70">
+                <div key={`joined-edit-${group.groupKey}`} className="border border-border bg-card/70">
                   <button
                     className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
                       isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'
@@ -402,14 +398,14 @@ export function CanvasSidebar({
         )}
 
         {groupedOwnedPrivate.map((group) => {
-          const isCurrentGroup = group.canvasSlug === currentCanvasGroupSlug;
+          const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
           const groupPageIds = group.pages.map((page) => page.id);
           const selectedPagesInGroup = group.pages.filter((page) => Boolean(selectedPages[page.id]));
           const areAllPagesSelected = group.pages.length > 0 && selectedPagesInGroup.length === group.pages.length;
           const defaultPageId = group.pages[0]?.id;
 
           return (
-            <div key={group.canvasSlug} className="border border-border bg-card">
+            <div key={group.groupKey} className="border border-border bg-card">
               <button
                 className={`w-full text-left px-2 py-2 text-xs font-mono transition-colors ${
                   isCurrentGroup && !deleteMode ? 'bg-foreground text-background border-foreground' : 'hover:bg-accent'

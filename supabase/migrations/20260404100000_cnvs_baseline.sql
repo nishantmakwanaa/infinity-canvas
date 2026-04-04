@@ -431,6 +431,9 @@ $$;
 revoke all on function public.list_joined_canvases() from public;
 grant execute on function public.list_joined_canvases() to authenticated;
 
+-- Remove legacy overloads so PostgREST does not hit ambiguous RPC signatures.
+drop function if exists public.sync_canvas_permission_from_share(uuid);
+
 create or replace function public.sync_canvas_permission_from_share(
   p_canvas_id uuid,
   p_access_level text default null
@@ -664,6 +667,12 @@ begin
             and cp.user_id = v_user_id
             and cp.role in ('owner', 'editor', 'viewer')
         )
+        or exists (
+          select 1
+          from public.shared_canvases sc
+          where sc.canvas_id = c.id
+            and sc.access_level in ('viewer', 'editor')
+        )
       )
     limit 1;
 end;
@@ -878,6 +887,12 @@ begin
       and (
         c.user_id = v_user_id
         or cp.role in ('owner', 'editor')
+        or exists (
+          select 1
+          from public.shared_canvases sc
+          where sc.canvas_id = c.id
+            and sc.access_level = 'editor'
+        )
       )
   ) into v_has_access;
 

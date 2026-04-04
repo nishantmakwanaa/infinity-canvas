@@ -224,10 +224,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const canvasIdRef = useRef<string | null>(null);
   const currentCanvasIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const flushSoonTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const guestSaveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   const lastGuestSignatureRef = useRef('');
   const pendingSyncCacheRef = useRef<Record<string, PendingCanvasSyncSnapshot>>({});
   const blockedWriteCanvasIdsRef = useRef<Set<string>>(new Set());
+  const sharedCanvasesRef = useRef<CanvasMeta[]>([]);
+  const joinedCanvasAccessRef = useRef<JoinedCanvasAccessMap>({});
   const permissionWarningShownRef = useRef(false);
   const schemaMissingWarningShownRef = useRef(false);
   const isFlushingRemoteRef = useRef(false);
@@ -240,6 +243,14 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
   const [currentCanvasName, setCurrentCanvasName] = useState<string | null>(null);
   const [isCanvasLoading, setIsCanvasLoading] = useState(true);
+
+  useEffect(() => {
+    sharedCanvasesRef.current = sharedCanvases;
+  }, [sharedCanvases]);
+
+  useEffect(() => {
+    joinedCanvasAccessRef.current = joinedCanvasAccessByCanvasId;
+  }, [joinedCanvasAccessByCanvasId]);
 
   const warnPermissionIssue = useCallback(() => {
     if (permissionWarningShownRef.current) return;
@@ -369,6 +380,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
   const refreshSharedCanvases = useCallback(async (userId: string) => {
     const localJoinedAccess = readJoinedCanvasAccess(userId);
+    const localJoinedIds = Object.keys(localJoinedAccess).filter((id) => id.trim().length > 0);
 
     type JoinedRow = { id: string; name: string; updated_at: string; role: string };
     let rows: JoinedRow[] | null = null;
@@ -433,8 +445,31 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         warnSchemaNotDeployed();
       }
 
+      if (rows === null && localJoinedIds.length) {
+        const { data: localCanvasRows, error: localCanvasErr } = await supabase
+          .from('canvases')
+          .select('id,name,updated_at,user_id')
+          .in('id', localJoinedIds);
+
+        if (!localCanvasErr && Array.isArray(localCanvasRows)) {
+          rows = localCanvasRows
+            .filter((c) => c.user_id !== userId)
+            .map((c) => ({
+              id: c.id,
+              name: c.name,
+              updated_at: c.updated_at,
+              role: localJoinedAccess[c.id] === 'editor' ? 'editor' : 'viewer',
+            }));
+        } else if (isPermissionDeniedError(localCanvasErr)) {
+          warnPermissionIssue();
+        } else if (isPostgrestResourceMissingError(localCanvasErr)) {
+          warnSchemaNotDeployed();
+        }
+      }
+
       if (rows === null) {
-        rows = [];
+        // Keep current joined list on transient failures; avoid wiping sidebar sections.
+        return sharedCanvasesRef.current;
       }
     }
 
@@ -561,12 +596,23 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
   }, [warnPermissionIssue]);
 
-  const loadCanvasById = useCallback(async (canvasId: string, persistForUserId?: string): Promise<boolean> => {
+  const loadCanvasById = useCallback(async (
+    canvasId: string,
+    persistForUserId?: string,
+    options?: { allowRedirectOnMissing?: boolean; showLoading?: boolean }
+  ): Promise<boolean> => {
+    const allowRedirectOnMissing = options?.allowRedirectOnMissing ?? true;
+    const showLoading = options?.showLoading ?? true;
     const seq = ++loadSeqRef.current;
     isLoadingRef.current = true;
-    setIsCanvasLoading(true);
+    if (showLoading) {
+      setIsCanvasLoading(true);
+    }
 
     try {
+      const isKnownJoinedCanvas = Boolean(joinedCanvasAccessRef.current[canvasId])
+        || sharedCanvasesRef.current.some((canvas) => canvas.id === canvasId);
+
       const rpc = await supabase.rpc('get_canvas_for_user', {
         p_canvas_id: canvasId,
       });
@@ -577,7 +623,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       let error: any = rpc?.error || null;
       let status = Number(error?.status || 0);
 
-      if (error && isRpcMissingError(error)) {
+      if (error && (isRpcMissingError(error) || status === 400)) {
         const fallback = await supabase
           .from('canvases')
           .select('*')
@@ -586,6 +632,37 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         data = Array.isArray(fallback.data) ? fallback.data : [];
         error = fallback.error;
         status = Number((fallback as any)?.status || Number(error?.status || 0));
+      }
+
+      // Joined/editor routes can still be valid even if permission-sync RPC lags.
+      if ((!data || !data.length) && isKnownJoinedCanvas) {
+        const fallback = await supabase
+          .from('canvases')
+          .select('*')
+          .eq('id', canvasId)
+          .limit(1);
+        if (Array.isArray(fallback.data) && fallback.data.length) {
+          data = fallback.data;
+          error = null;
+          status = 200;
+        }
+      }
+
+      // Final fallback for sidebar switching: open by id if row exists.
+      if (!data || !data.length) {
+        const fallback = await supabase
+          .from('canvases')
+          .select('*')
+          .eq('id', canvasId)
+          .limit(1);
+        if (Array.isArray(fallback.data) && fallback.data.length) {
+          data = fallback.data;
+          error = null;
+          status = 200;
+        } else if (!error && fallback.error) {
+          error = fallback.error;
+          status = Number((fallback as any)?.status || Number((fallback.error as any)?.status || 0));
+        }
       }
 
       if (seq !== loadSeqRef.current) return false;
@@ -599,6 +676,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       const row = Array.isArray(data) ? data[0] : null;
 
       if (!row) {
+        const confirmedMissing = status === 404 || status === 406 || (!error && !isKnownJoinedCanvas);
+        if (!confirmedMissing) {
+          return false;
+        }
+        if (!allowRedirectOnMissing) {
+          return false;
+        }
         if (persistForUserId) {
           removeJoinedCanvasAccess(persistForUserId, canvasId);
         }
@@ -607,7 +691,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
           if (seq !== loadSeqRef.current) return false;
           const fallback = (owned || [])[0];
           if (fallback?.id && fallback.id !== canvasId) {
-            return await loadCanvasById(fallback.id, persistForUserId);
+            return await loadCanvasById(fallback.id, persistForUserId, options);
           }
         }
         if (currentCanvasIdRef.current === canvasId) {
@@ -795,9 +879,64 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   }, [enabled, refreshAllCanvasCollections, session?.user?.id]);
 
   const selectCanvas = useCallback(async (canvasId: string): Promise<boolean> => {
-    if (!enabled) return false;
-    return await loadCanvasById(canvasId, session?.user?.id);
-  }, [enabled, loadCanvasById, session?.user?.id]);
+    if (!enabled || !canvasId) return false;
+    const loaded = await loadCanvasById(canvasId, session?.user?.id, {
+      allowRedirectOnMissing: false,
+      showLoading: false,
+    });
+    if (loaded) return true;
+
+    if (currentCanvasIdRef.current === canvasId) {
+      return true;
+    }
+
+    // One quick retry helps when a prior in-flight load consumed the sequence.
+    await new Promise((resolve) => window.setTimeout(resolve, 80));
+    const retried = await loadCanvasById(canvasId, session?.user?.id, {
+      allowRedirectOnMissing: false,
+      showLoading: false,
+    });
+    if (retried || currentCanvasIdRef.current === canvasId) {
+      return true;
+    }
+
+    try {
+      const fallback = await supabase
+        .from('canvases')
+        .select('*')
+        .eq('id', canvasId)
+        .limit(1)
+        .maybeSingle();
+
+      if (fallback.error || !fallback.data) {
+        const fallbackStatus = Number((fallback as any)?.status || Number((fallback.error as any)?.status || 0));
+        if (fallbackStatus === 401 || fallbackStatus === 403) {
+          warnPermissionIssue();
+        }
+        return false;
+      }
+
+      const row = fallback.data as any;
+      canvasIdRef.current = row.id;
+      currentCanvasIdRef.current = row.id;
+      setCurrentCanvasId(row.id);
+      setCurrentCanvasName(String(row.name || '') || null);
+      if (session?.user?.id) {
+        writeLastOpenedCanvasId(session.user.id, row.id);
+        void syncServerLastOpenedCanvasId(row.id);
+      }
+      useCanvasStore.getState().loadCanvas(
+        (row.blocks as unknown as CanvasBlock[]) || [],
+        { x: Number(row.pan_x) || 0, y: Number(row.pan_y) || 0 },
+        typeof row.zoom === 'number' ? row.zoom : 1,
+        (row.drawings as DrawingElement[]) || []
+      );
+      setIsCanvasLoading(false);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [enabled, loadCanvasById, session?.user?.id, syncServerLastOpenedCanvasId, warnPermissionIssue]);
 
   const selectCanvasByName = useCallback(async (name: string) => {
     if (!enabled || !session?.user?.id) return;
@@ -913,8 +1052,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     try {
       for (const pending of pendingEntries) {
         if (!canWriteCanvas(pending.canvasId)) {
-          delete pendingSyncCacheRef.current[pending.canvasId];
-          removePendingCanvasSync(pendingCanvasSyncKey(userId, pending.canvasId));
+          // Keep pending snapshot for retry; access map can lag right after switch.
+          pendingSyncCacheRef.current[pending.canvasId] = pending;
+          writePendingCanvasSync(pending);
           continue;
         }
 
@@ -956,9 +1096,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
           errorCount += 1;
           if (isPermissionDeniedError(error)) {
             warnPermissionIssue();
-            blockedWriteCanvasIdsRef.current.add(pending.canvasId);
-            delete pendingSyncCacheRef.current[pending.canvasId];
-            removePendingCanvasSync(pendingCanvasSyncKey(userId, pending.canvasId));
+            // Keep pending data; permission can recover after share/role sync.
+            pendingSyncCacheRef.current[pending.canvasId] = pending;
+            writePendingCanvasSync(pending);
           } else {
             // Persist failed network sync for retry across reloads.
             pendingSyncCacheRef.current[pending.canvasId] = pending;
@@ -1092,8 +1232,17 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         queuedAtMs: Date.now(),
         updatedAt: new Date().toISOString(),
       };
+
+      // Push to DB shortly after user pauses input; do not wait for 60s interval.
+      if (flushSoonTimeoutRef.current) {
+        clearTimeout(flushSoonTimeoutRef.current);
+      }
+      flushSoonTimeoutRef.current = setTimeout(() => {
+        flushSoonTimeoutRef.current = undefined;
+        void flushPendingCanvasSync();
+      }, 1200);
     }, 320);
-  }, [canWriteCanvas, session]);
+  }, [canWriteCanvas, flushPendingCanvasSync, session]);
 
   const saveGuestCanvas = useCallback(() => {
     if (session?.user?.id || isLoadingRef.current) return;
@@ -1126,7 +1275,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     blockedWriteCanvasIdsRef.current.clear();
 
     if (session?.user?.id) {
-      loadCanvas(session.user.id);
+      void loadCanvas(session.user.id).catch(() => {
+        setIsCanvasLoading(false);
+      });
     } else {
       canvasIdRef.current = null;
       currentCanvasIdRef.current = null;
@@ -1194,6 +1345,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     return () => {
       window.clearInterval(intervalId);
+      if (flushSoonTimeoutRef.current) {
+        clearTimeout(flushSoonTimeoutRef.current);
+        flushSoonTimeoutRef.current = undefined;
+      }
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('beforeunload', onBeforeUnload);
     };

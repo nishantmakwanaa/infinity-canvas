@@ -132,6 +132,7 @@ const Index = () => {
       (rawUserToken && parsedApiRequest?.kind === 'share-edit')
     )
   );
+  const collaborationActivationReady = Boolean(activeCanvasIdForCollab) && !isRouteLoading && !isCanvasLoading;
   const collaborationIdentity = useMemo(
     () => (user
       ? {
@@ -156,7 +157,7 @@ const Index = () => {
   } = useSocketCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    allowCollaboratorsForCurrentCanvas && useSocketTransport
+    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && useSocketTransport
   );
 
   const {
@@ -169,7 +170,7 @@ const Index = () => {
   } = useCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    allowCollaboratorsForCurrentCanvas && !useSocketTransport
+    allowCollaboratorsForCurrentCanvas && collaborationActivationReady && !useSocketTransport
   );
 
   const collaborators = useSocketTransport ? socketCollaborators : realtimeCollaborators;
@@ -339,17 +340,13 @@ const Index = () => {
     if (!canvasId) return;
 
     const joinedAccess = joinedCanvasAccessByCanvasId[canvasId];
-    const isJoinedCanvas = sharedCanvases.some((canvas) => canvas.id === canvasId);
+    const isJoinedCanvas = Boolean(joinedAccess) || sharedCanvases.some((canvas) => canvas.id === canvasId);
 
     if (isJoinedCanvas && session?.user?.id) {
-      try {
-        await syncCanvasPermissionFromShare(
-          canvasId,
-          joinedAccess === 'editor' ? 'editor' : 'viewer'
-        );
-      } catch {
-        // Best-effort pre-sync only.
-      }
+      void syncCanvasPermissionFromShare(
+        canvasId,
+        joinedAccess === 'editor' ? 'editor' : 'viewer'
+      );
     }
 
     let loaded = false;
@@ -366,16 +363,13 @@ const Index = () => {
   const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
     if (!canvasId) return;
     if (rawUserToken) {
-      pendingSidebarActionRef.current = { type: 'select', canvasId };
       setRouteMode('home');
       setRouteCanvasId(null);
       setRouteCanvasName(null);
       setRouteError('');
-      navigate('/', { replace: true });
-      return;
     }
     void openCanvasFromUi(canvasId);
-  }, [navigate, openCanvasFromUi, rawUserToken]);
+  }, [openCanvasFromUi, rawUserToken]);
 
   const handleCreateCanvasFromUi = useCallback(() => {
     if (rawUserToken) {

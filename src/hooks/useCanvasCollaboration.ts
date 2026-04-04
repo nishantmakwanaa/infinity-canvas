@@ -477,6 +477,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
       });
 
     channel.subscribe((status: string) => {
+      if (cancelled) return;
       if (!slotGrantedRef.current) return;
       if (status === 'SUBSCRIBED') {
         reconnectAttemptsRef.current = 0;
