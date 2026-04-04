@@ -398,6 +398,12 @@ export function AppHeader({
   }, [emitShareMenuVisibility, showShareMenu]);
 
   useEffect(() => {
+    if (showShareMenu) {
+      setShowCollaboratorMenu(false);
+    }
+  }, [showShareMenu]);
+
+  useEffect(() => {
     if (!showCollaboratorMenu) return;
 
     const onPointerDown = (event: PointerEvent) => {
@@ -431,6 +437,12 @@ export function AppHeader({
       emitCollaboratorMenuVisibility(false);
     };
   }, [emitCollaboratorMenuVisibility, showCollaboratorMenu]);
+
+  useEffect(() => {
+    if (showCollaboratorMenu) {
+      setShowShareMenu(false);
+    }
+  }, [showCollaboratorMenu]);
 
   useEffect(() => {
     const onOpenShortcuts = () => setShowShortcutsDialog(true);
@@ -604,7 +616,7 @@ export function AppHeader({
               )}
             </button>
             {showCollaboratorMenu && (
-              <div ref={collabMenuContentRef} className="absolute right-0 top-10 z-50 w-72 border border-border bg-card p-2 shadow-lg space-y-2">
+              <div ref={collabMenuContentRef} className="fixed right-4 top-14 z-50 w-72 border border-border bg-card p-2 shadow-lg space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-mono text-foreground">Active editors</span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">

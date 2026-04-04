@@ -71,6 +71,8 @@ Create a `.env` file in the project root:
 ```bash
 VITE_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_ANON_KEY
+# Optional: only set if you want dedicated Socket.IO transport.
+VITE_SOCKET_SERVER_URL=http://localhost:3400
 # Optional OAuth redirect override
 VITE_AUTH_REDIRECT_TO=http://localhost:8080/
 ```
@@ -82,11 +84,19 @@ npm install
 npm run dev
 ```
 
+Optional dedicated socket transport (local):
+
+```bash
+npm run socket:dev
+```
+
 Default dev server: `http://localhost:8080`
 
 ## Scripts
 
 - `npm run dev`: start Vite dev server
+- `npm run dev:all`: start Socket.IO server + Vite together (single local command)
+- `npm run socket:dev`: start Socket.IO collaboration server
 - `npm run dev:restart`: restart-on-change dev command
 - `npm run build`: production build
 - `npm run build:dev`: build in development mode
@@ -137,12 +147,21 @@ CNVS now supports live, multi-user collaboration for shared canvases.
 
 Realtime behavior:
 
+- Transport fallback: if `VITE_SOCKET_SERVER_URL` is unset, app uses Supabase Realtime (single-host friendly for Vercel).
+- Socket.IO websocket transport for cursor, viewport, and snapshot sync when configured.
 - Presence heartbeat + tool/pan/zoom metadata sync.
+- Client-side cursor interpolation (timestamp lerp) for smoother motion on unstable networks.
 - Throttled canvas snapshot broadcast for low-latency collaboration.
 - Snapshot request/response on join so late joiners receive latest canvas state immediately.
-- Automatic collaboration channel reconnect with backoff after timeout/error.
+- Automatic Socket.IO reconnect with backoff.
 - Strict server-side cap of 20 concurrent editors per editable shared canvas.
 - Shared editor users can persist updates through Supabase RLS policy.
+
+Socket server:
+
+- File: `socket-server/server.mjs`
+- Default port: `3400` (`SOCKET_PORT` overrides)
+- CORS: `SOCKET_CORS_ORIGIN` (comma-separated origins or `*`)
 
 ## Load Test Configuration
 

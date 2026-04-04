@@ -12,6 +12,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useCanvasStore } from '@/store/canvasStore';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useSocketCanvasCollaboration } from '@/hooks/useSocketCanvasCollaboration';
 import { useCanvasCollaboration } from '@/hooks/useCanvasCollaboration';
 import { getPageNumber, nextPageSlug, parseCanvasRouteName } from '@/lib/canvasNaming';
 import { parseSegmentedApiRequest, toOwnerPagePath } from '@/lib/pageApi';
@@ -93,6 +94,7 @@ const Index = () => {
   const editorCapToastShownRef = useRef(false);
   const isMobile = useIsMobile();
   const [mobileToolSettingsOpen, setMobileToolSettingsOpen] = useState(false);
+  const pendingCanvasSelectionRef = useRef<string | null>(null);
 
   const isLoggedIn = Boolean(session?.user?.id);
   const isShareEditRoute = parsedApiRequest?.kind === 'share-edit';
@@ -129,18 +131,41 @@ const Index = () => {
     [user?.id, user?.displayName, user?.avatarUrl]
   );
 
+  const socketServerUrl = String(import.meta.env.VITE_SOCKET_SERVER_URL || '').trim();
+  const useSocketTransport = Boolean(socketServerUrl);
+
   const {
-    collaborators,
-    isConnected: collaborationConnected,
-    toggleUserVisibility,
-    editorSlotGranted,
-    editorSlotActiveCount,
-    editorSlotLimitCount,
+    collaborators: socketCollaborators,
+    isConnected: socketConnected,
+    toggleUserVisibility: socketToggleUserVisibility,
+    editorSlotGranted: socketEditorSlotGranted,
+    editorSlotActiveCount: socketEditorSlotActiveCount,
+    editorSlotLimitCount: socketEditorSlotLimitCount,
+  } = useSocketCanvasCollaboration(
+    activeCanvasIdForCollab,
+    collaborationIdentity,
+    allowCollaboratorsForCurrentCanvas && useSocketTransport
+  );
+
+  const {
+    collaborators: realtimeCollaborators,
+    isConnected: realtimeConnected,
+    toggleUserVisibility: realtimeToggleUserVisibility,
+    editorSlotGranted: realtimeEditorSlotGranted,
+    editorSlotActiveCount: realtimeEditorSlotActiveCount,
+    editorSlotLimitCount: realtimeEditorSlotLimitCount,
   } = useCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    allowCollaboratorsForCurrentCanvas
+    allowCollaboratorsForCurrentCanvas && !useSocketTransport
   );
+
+  const collaborators = useSocketTransport ? socketCollaborators : realtimeCollaborators;
+  const collaborationConnected = useSocketTransport ? socketConnected : realtimeConnected;
+  const toggleUserVisibility = useSocketTransport ? socketToggleUserVisibility : realtimeToggleUserVisibility;
+  const editorSlotGranted = useSocketTransport ? socketEditorSlotGranted : realtimeEditorSlotGranted;
+  const editorSlotActiveCount = useSocketTransport ? socketEditorSlotActiveCount : realtimeEditorSlotActiveCount;
+  const editorSlotLimitCount = useSocketTransport ? socketEditorSlotLimitCount : realtimeEditorSlotLimitCount;
 
   const collabEditLocked = allowCollaboratorsForCurrentCanvas && !editorSlotGranted;
   const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked;
@@ -290,14 +315,24 @@ const Index = () => {
   const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
     if (!canvasId) return;
     if (rawUserToken) {
+      pendingCanvasSelectionRef.current = canvasId;
+      setRouteMode('home');
+      setRouteCanvasId(null);
+      setRouteCanvasName(null);
+      setRouteError('');
       navigate('/', { replace: true });
-      window.setTimeout(() => {
-        void selectCanvas(canvasId);
-      }, 0);
       return;
     }
     void selectCanvas(canvasId);
   }, [navigate, rawUserToken, selectCanvas]);
+
+  useEffect(() => {
+    if (rawUserToken) return;
+    const pendingCanvasId = pendingCanvasSelectionRef.current;
+    if (!pendingCanvasId) return;
+    pendingCanvasSelectionRef.current = null;
+    void selectCanvas(pendingCanvasId);
+  }, [rawUserToken, selectCanvas]);
 
   const onCanvasProfilerRender = useCallback<ProfilerOnRenderCallback>((_id, phase, actualDuration, baseDuration) => {
     if (phase === 'update' && actualDuration < 3) return;
@@ -679,7 +714,13 @@ const Index = () => {
               <div
                 key={`cursor-${collab.userId}`}
                 className="absolute"
-                style={{ left: `${x}px`, top: `${y}px`, transform: 'translate(-1px, -1px)' }}
+                style={{
+                  left: `${x}px`,
+                  top: `${y}px`,
+                  transform: 'translate(-1px, -1px)',
+                  transition: 'left 55ms linear, top 55ms linear',
+                  willChange: 'left, top',
+                }}
               >
                 <div
                   className="w-0 h-0"

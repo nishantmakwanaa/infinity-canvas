@@ -534,7 +534,6 @@ declare
   v_limit integer := 20;
   v_ttl integer := greatest(30, least(300, coalesce(p_ttl_seconds, 90)));
   v_has_access boolean := false;
-  v_exists boolean := false;
   v_active integer := 0;
 begin
   if p_canvas_id is null or v_user_id is null then
@@ -564,24 +563,20 @@ begin
   where canvas_id = p_canvas_id
     and expires_at <= now();
 
-  select exists (
-    select 1
-    from public.canvas_editor_sessions
-    where canvas_id = p_canvas_id
-      and user_id = v_user_id
-  ) into v_exists;
+  -- Enforce one logical slot per authenticated account (user_id) even if duplicate rows exist.
+  delete from public.canvas_editor_sessions
+  where canvas_id = p_canvas_id
+    and user_id = v_user_id;
 
-  if not v_exists then
-    select count(*)
-    into v_active
-    from public.canvas_editor_sessions
-    where canvas_id = p_canvas_id
-      and expires_at > now();
+  select count(distinct user_id)
+  into v_active
+  from public.canvas_editor_sessions
+  where canvas_id = p_canvas_id
+    and expires_at > now();
 
-    if v_active >= v_limit then
-      return query select false, v_active, v_limit;
-      return;
-    end if;
+  if v_active >= v_limit then
+    return query select false, v_active, v_limit;
+    return;
   end if;
 
   insert into public.canvas_editor_sessions (canvas_id, user_id, client_id, last_seen_at, expires_at)
@@ -591,15 +586,9 @@ begin
     coalesce(p_client_id, ''),
     now(),
     now() + make_interval(secs => v_ttl)
-  )
-  on conflict (canvas_id, user_id)
-  do update
-  set
-    client_id = excluded.client_id,
-    last_seen_at = now(),
-    expires_at = now() + make_interval(secs => v_ttl);
+  );
 
-  select count(*)
+  select count(distinct user_id)
   into v_active
   from public.canvas_editor_sessions
   where canvas_id = p_canvas_id
