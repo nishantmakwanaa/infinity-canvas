@@ -7,6 +7,7 @@ import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { parseCanvasRouteName } from '@/lib/canvasNaming';
+import { toOwnerPagePath, toPageApiUrl, toSharePagePath } from '@/lib/pageApi';
 
 interface AuthUser {
   id: string;
@@ -145,9 +146,11 @@ export function AppHeader({
         .single();
 
       const shareToken = (upsertedShare as any)?.share_token;
-      const nextShareUrl = routeOwner && parsed.canvasSlug
-        ? `${window.location.origin}/${encodeURIComponent(routeOwner)}/view/${encodeURIComponent(parsed.canvasSlug)}/${encodeURIComponent(parsed.pageSlug)}`
-        : `${window.location.origin}/view/${shareToken}`;
+      const ownerRouteName = `${parsed.canvasSlug}/${parsed.pageSlug}`;
+      const fallbackOwnerPath = toOwnerPagePath(routeOwner, ownerRouteName, user.id);
+      const nextShareUrl = shareToken
+        ? toPageApiUrl(toSharePagePath(routeOwner, shareToken, user.id))
+        : toPageApiUrl(fallbackOwnerPath);
 
       setShareUrl(nextShareUrl);
       return nextShareUrl;

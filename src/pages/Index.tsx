@@ -12,9 +12,14 @@ import { useCanvasStore } from '@/store/canvasStore';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { getPageNumber, nextPageSlug, parseCanvasRouteName } from '@/lib/canvasNaming';
+import { parseSegmentedApiRequest, toOwnerPagePath } from '@/lib/pageApi';
+import { supabase } from '@/integrations/supabase/client';
+import { useLocation } from 'react-router-dom';
 
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
 const DEFAULT_SITE_TITLE = 'CNVS - Your Second Brain Canvas';
+
+type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found';
 
 interface CanvasSnapshot {
   blocks: any[];
@@ -35,23 +40,34 @@ const Index = () => {
   useThemeTime();
   const { user, session, loading, signInWithGoogle, signOut } = useAuth();
   const navigate = useNavigate();
-  const params = useParams<{ username?: string; canvasName?: string; pageName?: string }>();
+  const location = useLocation();
+  const params = useParams<{ pageToken?: string }>();
+  const rawUserToken = params.pageToken ? decodeURIComponent(params.pageToken) : null;
+  const parsedApiRequest = useMemo(
+    () => parseSegmentedApiRequest(rawUserToken, location.search),
+    [rawUserToken, location.search]
+  );
+
+  const [routeMode, setRouteMode] = useState<RouteMode>(rawUserToken ? 'loading' : 'home');
+  const [routeCanvasId, setRouteCanvasId] = useState<string | null>(null);
+  const [routeError, setRouteError] = useState('');
+
+  const syncEnabled = routeMode === 'home' || routeMode === 'editable';
+
   const {
     canvases,
     currentCanvasId,
     currentCanvasName,
     createCanvas,
     selectCanvas,
-    selectCanvasByName,
-    selectCanvasByRoute,
     deleteCanvases,
     renameCanvas,
     renamePage,
     isCanvasLoading,
-  } = useCanvasSync(session);
+  } = useCanvasSync(session, { enabled: syncEnabled });
+
   const [sidebarWidthPercent, setSidebarWidthPercent] = useState(18);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const initialRouteSyncedRef = useRef(false);
   const desktopSidebarWidthRef = useRef(18);
   const historyPastRef = useRef<CanvasSnapshot[]>([]);
   const historyFutureRef = useRef<CanvasSnapshot[]>([]);
@@ -59,22 +75,21 @@ const Index = () => {
   const isRestoringHistoryRef = useRef(false);
   const lastSnapshotRef = useRef<CanvasSnapshot | null>(null);
   const lastSerializedSnapshotRef = useRef('');
+  const routeCanvasAppliedRef = useRef<string | null>(null);
   const isMobile = useIsMobile();
   const [mobileToolSettingsOpen, setMobileToolSettingsOpen] = useState(false);
 
   const isLoggedIn = Boolean(session?.user?.id);
-  const routeOwnerSlug = params.username ? decodeURIComponent(params.username).toLowerCase() : null;
-  const signedInOwnerSlug = user ? slugifyUsername(user.username) : null;
-  const isDirectOwnerCanvasRoute = Boolean(params.username && params.canvasName);
-  const isOwnerRouteAuthorized = Boolean(
-    isDirectOwnerCanvasRoute
-      ? isLoggedIn && routeOwnerSlug && signedInOwnerSlug && routeOwnerSlug === signedInOwnerSlug
-      : true
-  );
-  const showUnauthorizedOwnerRoute = isDirectOwnerCanvasRoute && !isOwnerRouteAuthorized;
+  const isReadOnlyMode = routeMode === 'readonly';
+  const isRouteLoading = routeMode === 'loading';
+  const isNotFoundMode = routeMode === 'not-found';
+  const isEditorMode = !isReadOnlyMode && !isRouteLoading && !isNotFoundMode;
+
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
-  const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile ? sidebarWidthPercent : 0;
-  const showHeaderAndBars = !isCanvasLoading;
+  const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile && isEditorMode ? sidebarWidthPercent : 0;
+  const effectiveCanvasLoading = isRouteLoading || (syncEnabled && isCanvasLoading);
+  const showHeaderAndBars = !effectiveCanvasLoading;
+
   const currentParsedName = parseCanvasRouteName(currentCanvasName);
   const pageItems = useMemo(
     () =>
@@ -187,7 +202,7 @@ const Index = () => {
   };
 
   const handleCreatePage = () => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !isEditorMode) return;
     const pageSlugs = canvases
       .map((canvas) => parseCanvasRouteName(canvas.name))
       .filter((canvas) => canvas.canvasSlug === currentParsedName.canvasSlug)
@@ -197,59 +212,109 @@ const Index = () => {
   };
 
   useEffect(() => {
+    if (!rawUserToken) {
+      setRouteMode('home');
+      setRouteCanvasId(null);
+      setRouteError('');
+      return;
+    }
+
+    if (!parsedApiRequest) {
+      setRouteMode('not-found');
+      setRouteCanvasId(null);
+      setRouteError('Invalid page API token');
+      return;
+    }
+
+    let cancelled = false;
+    setRouteMode('loading');
+    setRouteCanvasId(null);
+    setRouteError('');
+
+    const resolveRoute = async () => {
+      const { data, error } = await (supabase as any).rpc('open_page_api_link', {
+        p_user_token: parsedApiRequest.userToken,
+        p_canvas_token: parsedApiRequest.canvasToken,
+        p_page_token: parsedApiRequest.pageToken,
+      });
+
+      if (cancelled) return;
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (error || !row?.canvas_id) {
+        if (session?.user?.id) {
+          setRouteMode('home');
+          setRouteCanvasId(null);
+          setRouteError('');
+          navigate('/', { replace: true });
+          return;
+        }
+        setRouteMode('not-found');
+        setRouteCanvasId(null);
+        setRouteError('Page not found or link expired');
+        return;
+      }
+
+      const canEdit = Boolean(row.can_edit) && !Boolean(row.is_share);
+      setRouteCanvasId(row.canvas_id);
+
+      if (canEdit) {
+        setRouteMode('editable');
+        return;
+      }
+
+      useCanvasStore.getState().loadCanvas(
+        (row.blocks as any[]) || [],
+        { x: Number(row.pan_x) || 0, y: Number(row.pan_y) || 0 },
+        typeof row.zoom === 'number' ? row.zoom : 1,
+        (row.drawings as any[]) || []
+      );
+      setRouteMode('readonly');
+    };
+
+    void resolveRoute();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate, parsedApiRequest, rawUserToken, session?.user?.id]);
+
+  useEffect(() => {
+    routeCanvasAppliedRef.current = null;
+  }, [routeCanvasId, rawUserToken, location.search]);
+
+  useEffect(() => {
+    if (routeMode !== 'editable' || !routeCanvasId || !syncEnabled) return;
+    if (routeCanvasAppliedRef.current === routeCanvasId) return;
+    routeCanvasAppliedRef.current = routeCanvasId;
+    void selectCanvas(routeCanvasId);
+  }, [routeMode, routeCanvasId, selectCanvas, syncEnabled]);
+
+  useEffect(() => {
     if (!isMobile) {
       setMobileToolSettingsOpen(false);
     }
   }, [isMobile]);
 
   useEffect(() => {
-    if (showUnauthorizedOwnerRoute) return;
-    if (!session?.user?.id || initialRouteSyncedRef.current) return;
-
-    const routeCanvasName = params.canvasName ? decodeURIComponent(params.canvasName) : '';
-    const routePageName = params.pageName ? decodeURIComponent(params.pageName) : '';
-    const routeName = routeCanvasName ? (routePageName ? `${routeCanvasName}/${routePageName}` : routeCanvasName) : '';
-    initialRouteSyncedRef.current = true;
-
-    if (!routeName) {
-      return;
-    }
-
-    if (params.username) {
-      void selectCanvasByRoute(params.username, routeCanvasName, routePageName || undefined);
-    } else {
-      void selectCanvasByName(routeName);
-    }
-  }, [showUnauthorizedOwnerRoute, session?.user?.id, params.canvasName, params.pageName, params.username, selectCanvasByName, selectCanvasByRoute]);
-
-  useEffect(() => {
-    if (!isLoggedIn && isDirectOwnerCanvasRoute) {
-      navigate('/', { replace: true });
-    }
-  }, [isLoggedIn, isDirectOwnerCanvasRoute, navigate]);
-
-  useEffect(() => {
-    if (!isLoggedIn || !currentCanvasName) {
+    if (!isLoggedIn || !currentCanvasName || !isEditorMode || !user) {
       document.title = DEFAULT_SITE_TITLE;
       return;
     }
     document.title = `CNVS : ${currentParsedName.canvasLabel} - ${currentParsedName.pageLabel}`;
-  }, [isLoggedIn, currentCanvasName, currentParsedName.canvasLabel, currentParsedName.pageLabel]);
+  }, [currentCanvasName, currentParsedName.canvasLabel, currentParsedName.pageLabel, isEditorMode, isLoggedIn, user]);
 
   useEffect(() => {
-    if (!user || !currentCanvasName) return;
-    const parsed = parseCanvasRouteName(currentCanvasName);
-    const desired = `/${slugifyUsername(user.username)}/${encodeURIComponent(parsed.canvasSlug)}/${encodeURIComponent(parsed.pageSlug)}`;
-    const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
-    const desiredPath = desired.replace(/\/+$/, '') || '/';
-    if (currentPath !== desiredPath) {
+    if (!user || !currentCanvasName || !isEditorMode) return;
+    if (rawUserToken && routeMode === 'editable' && routeCanvasId && currentCanvasId !== routeCanvasId) {
+      return;
+    }
+    const desired = toOwnerPagePath(slugifyUsername(user.username), currentCanvasName, user.id);
+    const currentRoute = `${window.location.pathname}${window.location.search}`;
+    if (currentRoute !== desired) {
       navigate(desired, { replace: true });
     }
-  }, [user, currentCanvasName, navigate]);
-
-  useEffect(() => {
-    initialRouteSyncedRef.current = false;
-  }, [session?.user?.id]);
+  }, [currentCanvasId, currentCanvasName, isEditorMode, navigate, rawUserToken, routeCanvasId, routeMode, user]);
 
   useEffect(() => {
     if (isMobile) {
@@ -297,7 +362,7 @@ const Index = () => {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (isCanvasLoading) return;
+      if (effectiveCanvasLoading || !isEditorMode) return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
       const isTyping = tag === 'input' || tag === 'textarea' || (target as any)?.isContentEditable;
@@ -388,40 +453,48 @@ const Index = () => {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [isCanvasLoading]);
+  }, [effectiveCanvasLoading, isEditorMode]);
 
-  return (
-    showUnauthorizedOwnerRoute ? (
+  if (isNotFoundMode) {
+    return (
       <div className="fixed inset-0 flex items-center justify-center bg-background">
         <div className="w-full max-w-md border border-border bg-card p-4 space-y-3 text-center">
-          <h2 className="text-sm font-mono text-foreground">Unauthorized access</h2>
+          <h2 className="text-sm font-mono text-foreground">Page not found</h2>
           <p className="text-xs font-mono text-muted-foreground">
-            This owner route can only be opened by the signed-in owner account.
+            {routeError || 'This page link is invalid or no longer available.'}
           </p>
-          {!isLoggedIn ? (
-            <button
-              className="h-9 px-4 border border-foreground bg-foreground text-background text-xs font-mono"
-              onClick={signInWithGoogle}
-            >
-              Sign in as owner
-            </button>
-          ) : (
-            <button
-              className="h-9 px-4 border border-border text-xs font-mono hover:bg-accent"
-              onClick={signOut}
-            >
-              Switch account
-            </button>
-          )}
+          <button
+            className="h-9 px-4 border border-border text-xs font-mono hover:bg-accent"
+            onClick={() => navigate('/', { replace: true })}
+          >
+            Go to home
+          </button>
         </div>
       </div>
-    ) : (
+    );
+  }
+
+  return (
     <>
       <InfiniteCanvas
+        readOnly={isReadOnlyMode}
         leftOffsetPercent={canvasLeftOffsetPercent}
-        loading={isCanvasLoading}
+        loading={effectiveCanvasLoading}
       />
-      {showHeaderAndBars && (
+
+      {isReadOnlyMode && (
+        <div className="fixed top-4 left-4 z-50 flex items-center gap-2">
+          <div className="w-7 h-7 bg-foreground flex items-center justify-center">
+            <span className="text-background text-xs font-bold font-mono">C</span>
+          </div>
+          <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
+          <span className="text-[10px] font-mono text-muted-foreground border border-border px-2 py-0.5">
+            READ ONLY
+          </span>
+        </div>
+      )}
+
+      {showHeaderAndBars && isEditorMode && (
         <AppHeader
           user={user}
           loading={loading}
@@ -444,7 +517,8 @@ const Index = () => {
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
         />
       )}
-      {isSidebarOpen && (
+
+      {isSidebarOpen && isEditorMode && (
         <>
           {isMobile && (
             <div
@@ -468,7 +542,8 @@ const Index = () => {
           />
         </>
       )}
-      {showHeaderAndBars && (
+
+      {showHeaderAndBars && isEditorMode && (
         <Toolbar
           leftOffsetPercent={canvasLeftOffsetPercent}
           isMobile={isMobile}
@@ -483,14 +558,15 @@ const Index = () => {
           onDelete={deleteSelectedBlocks}
         />
       )}
-      {showHeaderAndBars && (
+
+      {showHeaderAndBars && isEditorMode && (
         <ToolSettingsPanel
           isMobile={isMobile}
           mobileOpen={mobileToolSettingsOpen}
           onMobileOpenChange={setMobileToolSettingsOpen}
         />
       )}
-      {/* Made by Nishant */}
+
       {showHeaderAndBars && (
         isMobile ? (
           <div
@@ -507,7 +583,6 @@ const Index = () => {
         )
       )}
     </>
-    )
   );
 };
 

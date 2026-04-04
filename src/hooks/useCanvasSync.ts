@@ -11,6 +11,10 @@ export interface CanvasMeta {
   updated_at: string;
 }
 
+interface UseCanvasSyncOptions {
+  enabled?: boolean;
+}
+
 const GUEST_CANVAS_STORAGE_KEY = 'cnvs_guest_canvas_v1';
 const LAST_OPENED_CANVAS_KEY_PREFIX = 'cnvs_last_opened_canvas_v1_';
 
@@ -83,7 +87,8 @@ function writeLastOpenedCanvasId(userId: string, canvasId: string) {
   }
 }
 
-export function useCanvasSync(session: Session | null) {
+export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOptions) {
+  const enabled = options?.enabled ?? true;
   const canvasIdRef = useRef<string | null>(null);
   const currentCanvasIdRef = useRef<string | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
@@ -241,7 +246,7 @@ export function useCanvasSync(session: Session | null) {
   }, [loadCanvasById, refreshCanvases]);
 
   const createCanvas = useCallback(async (name?: string) => {
-    if (!session?.user?.id) return;
+    if (!enabled || !session?.user?.id) return;
     const createSeq = ++loadSeqRef.current;
     isLoadingRef.current = true;
     setIsCanvasLoading(true);
@@ -275,14 +280,15 @@ export function useCanvasSync(session: Session | null) {
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
-  }, [refreshCanvases, session?.user?.id]);
+  }, [enabled, refreshCanvases, session?.user?.id]);
 
   const selectCanvas = useCallback(async (canvasId: string) => {
+    if (!enabled) return;
     await loadCanvasById(canvasId, session?.user?.id);
-  }, [loadCanvasById, session?.user?.id]);
+  }, [enabled, loadCanvasById, session?.user?.id]);
 
   const selectCanvasByName = useCallback(async (name: string) => {
-    if (!session?.user?.id) return;
+    if (!enabled || !session?.user?.id) return;
     const requestedSeq = loadSeqRef.current;
     const { data } = await supabase
       .from('canvases')
@@ -294,9 +300,10 @@ export function useCanvasSync(session: Session | null) {
       .maybeSingle();
     if (requestedSeq !== loadSeqRef.current) return;
     if (data?.id) await loadCanvasById(data.id, session.user.id);
-  }, [loadCanvasById, session?.user?.id]);
+  }, [enabled, loadCanvasById, session?.user?.id]);
 
   const selectCanvasByRoute = useCallback(async (ownerUsername: string, name: string, pageName?: string) => {
+    if (!enabled) return;
     const requestedSeq = loadSeqRef.current;
     let { data, error } = await supabase.rpc('resolve_user_canvas', {
       p_owner_username: ownerUsername,
@@ -315,10 +322,10 @@ export function useCanvasSync(session: Session | null) {
     if (!error && data) {
       await loadCanvasById(data as string, session?.user?.id);
     }
-  }, [loadCanvasById, session?.user?.id]);
+  }, [enabled, loadCanvasById, session?.user?.id]);
 
   const deleteCanvases = useCallback(async (ids: string[]) => {
-    if (!session?.user?.id) return;
+    if (!enabled || !session?.user?.id) return;
     if (!ids.length) return;
 
     // Invalidate any in-flight loads/saves.
@@ -350,7 +357,7 @@ export function useCanvasSync(session: Session | null) {
     }
 
     isLoadingRef.current = false;
-  }, [createCanvas, loadCanvasById, refreshCanvases, session?.user?.id]);
+  }, [createCanvas, enabled, loadCanvasById, refreshCanvases, session?.user?.id]);
 
   const getAdaptiveSaveDelayMs = () => {
     const connection = (navigator as any)?.connection;
@@ -504,6 +511,11 @@ export function useCanvasSync(session: Session | null) {
   }, [session?.user?.id]);
 
   useEffect(() => {
+    if (!enabled) {
+      setIsCanvasLoading(false);
+      return;
+    }
+
     if (session?.user?.id) {
       loadCanvas(session.user.id);
     } else {
@@ -525,23 +537,23 @@ export function useCanvasSync(session: Session | null) {
       }
       setIsCanvasLoading(false);
     }
-  }, [session?.user?.id, loadCanvas]);
+  }, [enabled, session?.user?.id, loadCanvas]);
 
   useEffect(() => {
-    if (!session?.user?.id) return;
+    if (!enabled || !session?.user?.id) return;
     const unsub = useCanvasStore.subscribe(() => {
       saveCanvas();
     });
     return () => unsub();
-  }, [session?.user?.id, saveCanvas]);
+  }, [enabled, session?.user?.id, saveCanvas]);
 
   useEffect(() => {
-    if (session?.user?.id) return;
+    if (!enabled || session?.user?.id) return;
     const unsub = useCanvasStore.subscribe(() => {
       saveGuestCanvas();
     });
     return () => unsub();
-  }, [session?.user?.id, saveGuestCanvas]);
+  }, [enabled, session?.user?.id, saveGuestCanvas]);
 
   useEffect(() => {
     return () => {

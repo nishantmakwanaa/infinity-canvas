@@ -272,48 +272,212 @@ using (
 -- RPC helpers
 -- -----------------------------------------------------------------------------
 
--- Resolves /:username/view/:canvasName  →  canvas_id via shared_canvases.
-create or replace function public.resolve_shared_canvas(
-  p_owner_username  text,
-  p_canvas_name     text,
-  p_page_name       text default null
+drop function if exists public.resolve_shared_canvas(text, text, text);
+drop function if exists public.resolve_shared_canvas(text, text);
+
+create or replace function public.decode_hex_to_text(p_hex text)
+returns text
+language plpgsql
+immutable
+as $$
+declare
+  v_payload text := regexp_replace(btrim(coalesce(p_hex, '')), '[\.-]', '', 'g');
+  v_bytes bytea;
+begin
+  if v_payload = '' or v_payload !~ '^[0-9a-fA-F]+$' or length(v_payload) % 2 <> 0 then
+    return null;
+  end if;
+
+  begin
+    v_bytes := decode(v_payload, 'hex');
+    return convert_from(v_bytes, 'UTF8');
+  exception when others then
+    return null;
+  end;
+end;
+$$;
+
+comment on function public.decode_hex_to_text(text)
+is 'Decodes dotted/dashed hex token segments into UTF-8 text.';
+
+
+-- Resolves segmented API route:
+--   /<userToken>?<canvasToken>=<pageToken>.page
+-- userToken prefix:
+--   pg => owner route (editable only by owner)
+--   sh => shared route (always read-only)
+drop function if exists public.open_page_api_link(text);
+drop function if exists public.open_page_api_link(text, text, text);
+
+create or replace function public.open_page_api_link(
+  p_user_token text,
+  p_canvas_token text,
+  p_page_token text
 )
-returns uuid
-language sql
+returns table (
+  canvas_id       uuid,
+  owner_user_id   uuid,
+  owner_username  text,
+  canvas_name     text,
+  page_name       text,
+  is_share        boolean,
+  can_edit        boolean,
+  blocks          jsonb,
+  drawings        jsonb,
+  pan_x           double precision,
+  pan_y           double precision,
+  zoom            double precision
+)
+language plpgsql
 stable
 security definer
 set search_path = public
 as $$
-  select sc.canvas_id
-  from public.shared_canvases sc
-  where sc.owner_username = p_owner_username
-    and sc.canvas_name    = p_canvas_name
-    and (
-      p_page_name is null
-      or sc.page_name = p_page_name
+declare
+  v_user_token text := btrim(coalesce(p_user_token, ''));
+  v_canvas_token text := btrim(coalesce(p_canvas_token, ''));
+  v_page_token text := btrim(coalesce(p_page_token, ''));
+  v_prefix text;
+  v_owner_identity text;
+  v_owner_username text;
+  v_owner_user_id_text text;
+  v_owner_user_id uuid;
+  v_share_left text;
+  v_share_right text;
+  v_share_token text;
+  v_canvas text;
+  v_page text;
+begin
+  if v_user_token = '' or v_canvas_token = '' or v_page_token = '' then
+    return;
+  end if;
+
+  v_prefix := left(v_user_token, 2);
+
+  if v_prefix = 'sh' then
+    v_owner_identity := public.decode_hex_to_text(substr(v_user_token, 3));
+    if btrim(coalesce(v_owner_identity, '')) = '' then
+      return;
+    end if;
+
+    v_owner_username := split_part(v_owner_identity, '|', 1);
+    v_owner_user_id_text := nullif(split_part(v_owner_identity, '|', 2), '');
+    if v_owner_user_id_text is not null and v_owner_user_id_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' then
+      v_owner_user_id := v_owner_user_id_text::uuid;
+    end if;
+
+    v_share_left := public.decode_hex_to_text(v_canvas_token);
+    v_share_right := public.decode_hex_to_text(v_page_token);
+    if v_share_left is null or v_share_right is null then
+      return;
+    end if;
+    v_share_token := v_share_left || v_share_right;
+
+    return query
+      with matched as (
+        select
+          c.id as canvas_id,
+          c.user_id as owner_user_id,
+          lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) as owner_username,
+          case when position('/' in c.name) > 0 then split_part(c.name, '/', 1) else c.name end as canvas_name,
+          case when position('/' in c.name) > 0 then split_part(c.name, '/', 2) else 'page-1.cnvs' end as page_name,
+          true as is_share,
+          false as can_edit,
+          c.blocks,
+          c.drawings,
+          c.pan_x,
+          c.pan_y,
+          c.zoom
+        from public.shared_canvases sc
+        join public.canvases c on c.id = sc.canvas_id
+        join auth.users u on u.id = c.user_id
+        where sc.share_token = v_share_token
+          and lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) = lower(v_owner_username)
+          and (v_owner_user_id is null or c.user_id = v_owner_user_id)
+      ), counts as (
+        select count(*) as total from matched
+      )
+      select matched.*
+      from matched, counts
+      where counts.total = 1;
+    return;
+  end if;
+
+  if v_prefix <> 'pg' then
+    return;
+  end if;
+
+  v_owner_identity := public.decode_hex_to_text(substr(v_user_token, 3));
+  if btrim(coalesce(v_owner_identity, '')) = '' then
+    return;
+  end if;
+
+  v_owner_username := split_part(v_owner_identity, '|', 1);
+  v_owner_user_id_text := nullif(split_part(v_owner_identity, '|', 2), '');
+  if v_owner_user_id_text is not null and v_owner_user_id_text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' then
+    v_owner_user_id := v_owner_user_id_text::uuid;
+  end if;
+
+  v_canvas := public.decode_hex_to_text(v_canvas_token);
+  v_page := public.decode_hex_to_text(v_page_token);
+
+  if btrim(coalesce(v_owner_username, '')) = '' or btrim(coalesce(v_canvas, '')) = '' or btrim(coalesce(v_page, '')) = '' then
+    return;
+  end if;
+
+  if right(v_page, 5) <> '.cnvs' then
+    v_page := v_page || '.cnvs';
+  end if;
+
+  return query
+    with matched as (
+      select
+        c.id as canvas_id,
+        c.user_id as owner_user_id,
+        lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) as owner_username,
+        case when position('/' in c.name) > 0 then split_part(c.name, '/', 1) else c.name end as canvas_name,
+        case when position('/' in c.name) > 0 then split_part(c.name, '/', 2) else 'page-1.cnvs' end as page_name,
+        false as is_share,
+        auth.uid() is not null and auth.uid() = c.user_id as can_edit,
+        c.blocks,
+        c.drawings,
+        c.pan_x,
+        c.pan_y,
+        c.zoom,
+        case when c.name = v_canvas || '/' || v_page then 0 else 1 end as priority,
+        c.updated_at
+      from public.canvases c
+      join auth.users u on u.id = c.user_id
+      where lower(coalesce(nullif(split_part(u.email, '@', 1), ''), 'user')) = lower(v_owner_username)
+        and (v_owner_user_id is null or c.user_id = v_owner_user_id)
+        and (
+          c.name = v_canvas || '/' || v_page
+          or c.name = v_canvas
+        )
+    ), ranked as (
+      select matched.*, row_number() over (order by priority, updated_at desc) as rn, count(*) over () as total
+      from matched
     )
-  order by sc.created_at desc
-  limit 1;
+    select
+      ranked.canvas_id,
+      ranked.owner_user_id,
+      ranked.owner_username,
+      ranked.canvas_name,
+      ranked.page_name,
+      ranked.is_share,
+      ranked.can_edit,
+      ranked.blocks,
+      ranked.drawings,
+      ranked.pan_x,
+      ranked.pan_y,
+      ranked.zoom
+    from ranked
+    where rn = 1 and total = 1;
+end;
 $$;
 
-revoke all    on function public.resolve_shared_canvas(text, text, text) from public;
-grant execute on function public.resolve_shared_canvas(text, text, text) to anon, authenticated;
-
-create or replace function public.resolve_shared_canvas(
-  p_owner_username  text,
-  p_canvas_name     text
-)
-returns uuid
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select public.resolve_shared_canvas(p_owner_username, p_canvas_name, null);
-$$;
-
-revoke all    on function public.resolve_shared_canvas(text, text) from public;
-grant execute on function public.resolve_shared_canvas(text, text) to anon, authenticated;
+revoke all    on function public.open_page_api_link(text, text, text) from public;
+grant execute on function public.open_page_api_link(text, text, text) to anon, authenticated;
 
 
 -- Resolves /:username/:canvasName  →  canvas_id via canvases directly.
