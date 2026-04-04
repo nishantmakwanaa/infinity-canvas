@@ -298,7 +298,9 @@ const Index = () => {
         return;
       }
 
-      const canEdit = Boolean(row.can_edit);
+      const shareAccess = String((row as any)?.share_access || '').toLowerCase();
+      const isShareRoute = Boolean((row as any)?.is_share);
+      const canEdit = Boolean(row.can_edit) || Boolean(session?.user?.id && isShareRoute && shareAccess === 'editor');
       setRouteCanvasId(row.canvas_id);
       const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
       setRouteCanvasName(resolvedName);
@@ -556,7 +558,7 @@ const Index = () => {
           loading={loading}
           onSignIn={signInWithGoogle}
           readOnlyMode={isReadOnlyMode}
-          forceShowCollaboratorsButton={isReadOnlyMode}
+          forceShowCollaboratorsButton={Boolean(rawUserToken && user?.id)}
           currentCanvasId={currentCanvasId}
           currentCanvasName={activeCanvasName}
           currentCanvasLabel={currentParsedName.canvasLabel}
