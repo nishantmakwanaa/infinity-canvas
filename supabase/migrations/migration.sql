@@ -293,6 +293,8 @@ using (
     )
   )
   and (
+    auth.uid() = user_id
+    or
     not exists (
       select 1
       from public.shared_canvases sc_limit
@@ -322,6 +324,8 @@ with check (
     )
   )
   and (
+    auth.uid() = user_id
+    or
     not exists (
       select 1
       from public.shared_canvases sc_limit
@@ -461,6 +465,146 @@ $$;
 
 comment on function public.decode_hex_to_text(text)
 is 'Decodes compact URL-safe base64 tokens (preferred) and legacy dotted/dashed hex tokens into UTF-8 text.';
+
+
+drop function if exists public.get_canvas_for_user(uuid);
+create or replace function public.get_canvas_for_user(
+  p_canvas_id uuid
+)
+returns table (
+  id uuid,
+  user_id uuid,
+  name text,
+  blocks jsonb,
+  drawings jsonb,
+  pan_x double precision,
+  pan_y double precision,
+  zoom double precision,
+  updated_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+begin
+  if p_canvas_id is null or v_user_id is null then
+    return;
+  end if;
+
+  return query
+    select
+      c.id,
+      c.user_id,
+      c.name,
+      c.blocks,
+      c.drawings,
+      c.pan_x,
+      c.pan_y,
+      c.zoom,
+      c.updated_at
+    from public.canvases c
+    where c.id = p_canvas_id
+      and (
+        c.user_id = v_user_id
+        or exists (
+          select 1
+          from public.shared_canvases sc
+          where sc.canvas_id = c.id
+        )
+      )
+    limit 1;
+end;
+$$;
+
+revoke all on function public.get_canvas_for_user(uuid) from public;
+grant execute on function public.get_canvas_for_user(uuid) to authenticated;
+
+
+drop function if exists public.create_canvas_with_unique_name(text, jsonb, jsonb, double precision, double precision, double precision);
+create or replace function public.create_canvas_with_unique_name(
+  p_name text,
+  p_blocks jsonb default '[]'::jsonb,
+  p_drawings jsonb default '[]'::jsonb,
+  p_pan_x double precision default 0,
+  p_pan_y double precision default 0,
+  p_zoom double precision default 1
+)
+returns table (
+  id uuid,
+  name text,
+  updated_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_base_name text := btrim(coalesce(p_name, ''));
+  v_canvas_slug text;
+  v_page_slug text;
+  v_candidate_name text;
+  v_attempt int := 0;
+  v_max_attempts int := 30;
+begin
+  if v_user_id is null then
+    raise exception 'not allowed';
+  end if;
+
+  if v_base_name = '' then
+    v_base_name := 'untitled-' || floor(extract(epoch from clock_timestamp()) * 1000)::bigint::text || '/page-1.cnvs';
+  end if;
+
+  if position('/' in v_base_name) > 0 then
+    v_canvas_slug := split_part(v_base_name, '/', 1);
+    v_page_slug := split_part(v_base_name, '/', 2);
+  else
+    v_canvas_slug := v_base_name;
+    v_page_slug := 'page-1.cnvs';
+  end if;
+
+  v_canvas_slug := coalesce(nullif(btrim(v_canvas_slug), ''), 'untitled');
+  v_page_slug := coalesce(nullif(btrim(v_page_slug), ''), 'page-1.cnvs');
+
+  loop
+    if v_attempt = 0 then
+      v_candidate_name := v_canvas_slug || '/' || v_page_slug;
+    else
+      v_candidate_name := v_canvas_slug || '-' || (v_attempt + 1)::text || '/' || v_page_slug;
+    end if;
+
+    begin
+      insert into public.canvases (user_id, name, blocks, drawings, pan_x, pan_y, zoom)
+      values (
+        v_user_id,
+        v_candidate_name,
+        coalesce(p_blocks, '[]'::jsonb),
+        coalesce(p_drawings, '[]'::jsonb),
+        coalesce(p_pan_x, 0),
+        coalesce(p_pan_y, 0),
+        coalesce(p_zoom, 1)
+      )
+      returning canvases.id, canvases.name, canvases.updated_at
+      into id, name, updated_at;
+
+      return next;
+      return;
+    exception
+      when unique_violation then
+        v_attempt := v_attempt + 1;
+        if v_attempt >= v_max_attempts then
+          raise exception 'could not generate unique canvas name';
+        end if;
+    end;
+  end loop;
+end;
+$$;
+
+revoke all on function public.create_canvas_with_unique_name(text, jsonb, jsonb, double precision, double precision, double precision) from public;
+grant execute on function public.create_canvas_with_unique_name(text, jsonb, jsonb, double precision, double precision, double precision) to authenticated;
 
 
 create or replace function public.upsert_canvas_share(

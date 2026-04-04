@@ -25,6 +25,11 @@ const DEFAULT_SITE_TITLE = 'CNVS - Your Second Brain Canvas';
 
 type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found' | 'auth-required';
 
+type PendingSidebarAction =
+  | { type: 'select'; canvasId: string }
+  | { type: 'create' }
+  | { type: 'delete'; ids: string[] };
+
 interface CanvasSnapshot {
   blocks: any[];
   drawings: any[];
@@ -94,7 +99,8 @@ const Index = () => {
   const editorCapToastShownRef = useRef(false);
   const isMobile = useIsMobile();
   const [mobileToolSettingsOpen, setMobileToolSettingsOpen] = useState(false);
-  const pendingCanvasSelectionRef = useRef<string | null>(null);
+  const pendingSidebarActionRef = useRef<PendingSidebarAction | null>(null);
+  const routeSelectFailedCanvasIdRef = useRef<string | null>(null);
 
   const isLoggedIn = Boolean(session?.user?.id);
   const isShareEditRoute = parsedApiRequest?.kind === 'share-edit';
@@ -315,7 +321,7 @@ const Index = () => {
   const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
     if (!canvasId) return;
     if (rawUserToken) {
-      pendingCanvasSelectionRef.current = canvasId;
+      pendingSidebarActionRef.current = { type: 'select', canvasId };
       setRouteMode('home');
       setRouteCanvasId(null);
       setRouteCanvasName(null);
@@ -326,13 +332,53 @@ const Index = () => {
     void selectCanvas(canvasId);
   }, [navigate, rawUserToken, selectCanvas]);
 
+  const handleCreateCanvasFromUi = useCallback(() => {
+    if (rawUserToken) {
+      pendingSidebarActionRef.current = { type: 'create' };
+      setRouteMode('home');
+      setRouteCanvasId(null);
+      setRouteCanvasName(null);
+      setRouteError('');
+      navigate('/', { replace: true });
+      return;
+    }
+    void createCanvas();
+  }, [createCanvas, navigate, rawUserToken]);
+
+  const handleDeleteCanvasesFromUi = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    if (rawUserToken) {
+      pendingSidebarActionRef.current = { type: 'delete', ids: [...ids] };
+      setRouteMode('home');
+      setRouteCanvasId(null);
+      setRouteCanvasName(null);
+      setRouteError('');
+      navigate('/', { replace: true });
+      return;
+    }
+    void deleteCanvases(ids);
+  }, [deleteCanvases, navigate, rawUserToken]);
+
   useEffect(() => {
     if (rawUserToken) return;
-    const pendingCanvasId = pendingCanvasSelectionRef.current;
-    if (!pendingCanvasId) return;
-    pendingCanvasSelectionRef.current = null;
-    void selectCanvas(pendingCanvasId);
-  }, [rawUserToken, selectCanvas]);
+    const pendingAction = pendingSidebarActionRef.current;
+    if (!pendingAction) return;
+    pendingSidebarActionRef.current = null;
+
+    if (pendingAction.type === 'select') {
+      void selectCanvas(pendingAction.canvasId);
+      return;
+    }
+
+    if (pendingAction.type === 'create') {
+      void createCanvas();
+      return;
+    }
+
+    if (pendingAction.type === 'delete') {
+      void deleteCanvases(pendingAction.ids);
+    }
+  }, [createCanvas, deleteCanvases, rawUserToken, selectCanvas]);
 
   const onCanvasProfilerRender = useCallback<ProfilerOnRenderCallback>((_id, phase, actualDuration, baseDuration) => {
     if (phase === 'update' && actualDuration < 3) return;
@@ -449,9 +495,20 @@ const Index = () => {
 
   useEffect(() => {
     if (routeMode !== 'editable' || !routeCanvasId || !syncEnabled) return;
+    if (routeSelectFailedCanvasIdRef.current === routeCanvasId) return;
     if (currentCanvasId === routeCanvasId) return;
-    void selectCanvas(routeCanvasId);
-  }, [currentCanvasId, routeMode, routeCanvasId, selectCanvas, syncEnabled]);
+    void selectCanvas(routeCanvasId).then((loaded) => {
+      if (loaded) {
+        routeSelectFailedCanvasIdRef.current = null;
+        return;
+      }
+      routeSelectFailedCanvasIdRef.current = routeCanvasId;
+      if (rawUserToken) {
+        setRouteMode('readonly');
+        setRouteError('Canvas is not available for edit in this session.');
+      }
+    });
+  }, [currentCanvasId, rawUserToken, routeMode, routeCanvasId, selectCanvas, syncEnabled]);
 
   useEffect(() => {
     if (!isMobile) {
@@ -759,12 +816,12 @@ const Index = () => {
             shareAccessByCanvasId={shareAccessByCanvasId}
             joinedCanvasAccessByCanvasId={joinedCanvasAccessByCanvasId}
             currentCanvasId={effectiveCurrentCanvasId}
-            onCreateCanvas={() => createCanvas()}
+            onCreateCanvas={handleCreateCanvasFromUi}
             onSelectCanvas={(id) => {
               handleSelectCanvasFromUi(id);
               if (isMobile) setIsSidebarOpen(false);
             }}
-            onDeleteCanvases={(ids) => deleteCanvases(ids)}
+            onDeleteCanvases={handleDeleteCanvasesFromUi}
             user={user ? { id: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl } : null}
             onSignOut={signOut}
             widthPercent={effectiveSidebarWidthPercent}

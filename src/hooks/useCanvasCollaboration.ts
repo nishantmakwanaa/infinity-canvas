@@ -83,6 +83,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   const cursorSendTimeoutRef = useRef<number | null>(null);
   const viewportSendTimeoutRef = useRef<number | null>(null);
   const visibilityRef = useRef<Record<string, boolean>>({});
+  const connectedRef = useRef(false);
   const slotGrantedRef = useRef(true);
   const cursorRef = useRef<{ x: number | null; y: number | null }>({ x: null, y: null });
   const lastAppliedSnapshotUserIdRef = useRef<string | null>(null);
@@ -105,6 +106,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   const sendPresence = useCallback(() => {
     const channel = channelRef.current;
     if (!channel || !identity) return;
+    if (!connectedRef.current) return;
     if (!slotGrantedRef.current) return;
     const state = useCanvasStore.getState();
     void channel.track({
@@ -124,6 +126,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   const broadcastCursor = useCallback((x: number | null, y: number | null) => {
     const channel = channelRef.current;
     if (!channel || !identity) return;
+    if (!connectedRef.current) return;
     if (!slotGrantedRef.current) return;
     if (visibilityRef.current[identity.id] === false) return;
 
@@ -143,6 +146,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   const broadcastViewport = useCallback((pan: { x: number; y: number }, zoom: number) => {
     const channel = channelRef.current;
     if (!channel || !identity) return;
+    if (!connectedRef.current) return;
     if (!slotGrantedRef.current) return;
     if (visibilityRef.current[identity.id] === false) return;
 
@@ -168,6 +172,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   ) => {
     const channel = channelRef.current;
     if (!channel || !identity) return;
+    if (!connectedRef.current) return;
     if (!slotGrantedRef.current) return;
 
     const payload = {
@@ -329,6 +334,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
   useEffect(() => {
     if (!enabled || !canvasId || !identity?.id) {
       setIsConnected((prev) => (prev ? false : prev));
+      connectedRef.current = false;
       setPresenceUsers((prev) => (prev.length ? [] : prev));
       slotGrantedRef.current = true;
       setEditorSlotGranted(true);
@@ -504,6 +510,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
           window.clearTimeout(reconnectTimerRef.current);
           reconnectTimerRef.current = null;
         }
+        connectedRef.current = true;
         setIsConnected(true);
         sendPresence();
         void channel.send({
@@ -517,6 +524,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         });
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        connectedRef.current = false;
         setIsConnected(false);
         scheduleReconnect();
       }
@@ -531,6 +539,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         void supabase.removeChannel(channelRef.current);
         channelRef.current = null;
       }
+      connectedRef.current = false;
       setIsConnected(false);
       setPresenceUsers([]);
     });
@@ -566,6 +575,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
           void supabase.removeChannel(channelRef.current);
           channelRef.current = null;
         }
+        connectedRef.current = false;
         setIsConnected(false);
         setPresenceUsers([]);
       });
@@ -653,6 +663,7 @@ export function useCanvasCollaboration(canvasId: string | null, identity: Collab
         viewportSendTimeoutRef.current = null;
       }
       stopViewportAnimation();
+      connectedRef.current = false;
       setIsConnected((prev) => (prev ? false : prev));
       setPresenceUsers((prev) => (prev.length ? [] : prev));
       latestRemoteSnapshotRef.current = {};
