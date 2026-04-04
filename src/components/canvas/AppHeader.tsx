@@ -45,6 +45,8 @@ interface AppHeaderProps {
     isSelf?: boolean;
   }[];
   collaborationConnected?: boolean;
+  collaborationActiveCount?: number;
+  collaborationLimitCount?: number;
   onToggleCollaboratorVisibility?: (userId: string) => void;
 }
 
@@ -73,6 +75,8 @@ export function AppHeader({
   onRenamePage,
   collaborators = [],
   collaborationConnected = false,
+  collaborationActiveCount = 0,
+  collaborationLimitCount = 20,
   onToggleCollaboratorVisibility,
 }: AppHeaderProps) {
   const [sharing, setSharing] = useState(false);
@@ -103,11 +107,7 @@ export function AppHeader({
   const headerPageName = (currentPageLabel || '').trim() || 'Page 1';
   const isGuestUser = !user;
   const shouldShowCollaborators = Boolean(
-    user && onToggleCollaboratorVisibility && (
-      shareAccessLevel === 'editor' ||
-      collaborators.length > 0 ||
-      forceShowCollaboratorsButton
-    )
+    user && onToggleCollaboratorVisibility && !readOnlyMode && forceShowCollaboratorsButton
   );
 
   const resolveShareContext = async () => {
@@ -609,7 +609,7 @@ export function AppHeader({
                   <span className="text-[11px] font-mono text-foreground">Active editors</span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
                     {collaborationConnected ? <Wifi size={10} /> : <WifiOff size={10} />}
-                    {collaborationConnected ? 'Live' : ''}
+                    <span>{Math.max(collaborationActiveCount, collaborators.length)}/{collaborationLimitCount}</span>
                   </span>
                 </div>
                 {collaborators.length === 0 ? (

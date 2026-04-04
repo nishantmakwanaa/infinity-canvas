@@ -1,16 +1,35 @@
 import { Chrome } from 'lucide-react';
 
 interface AuthGateDialogProps {
-  mode: 'home' | 'share-edit';
+  mode: 'home' | 'share' | 'share-edit';
   loading?: boolean;
   onSignIn: () => void;
+  presentation?: 'fullscreen' | 'overlay';
+  onClose?: () => void;
+  dismissOnBackdrop?: boolean;
 }
 
-export function AuthGateDialog({ mode, loading = false, onSignIn }: AuthGateDialogProps) {
+export function AuthGateDialog({
+  mode,
+  loading = false,
+  onSignIn,
+  presentation = 'fullscreen',
+  onClose,
+  dismissOnBackdrop = false,
+}: AuthGateDialogProps) {
   const isShareEdit = mode === 'share-edit';
+  const isShare = mode === 'share';
+  const isOverlay = presentation === 'overlay';
 
   return (
-    <div className="fixed inset-0 z-[120] bg-background flex items-center justify-center px-4">
+    <div
+      className={`fixed inset-0 z-[120] flex items-center justify-center px-4 ${isOverlay ? 'bg-background/35 backdrop-blur-[1px]' : 'bg-background'}`}
+      onClick={(event) => {
+        if (!dismissOnBackdrop) return;
+        if (event.target !== event.currentTarget) return;
+        onClose?.();
+      }}
+    >
       <div className="w-full max-w-md border border-border bg-card p-6 space-y-4 shadow-lg">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-foreground flex items-center justify-center">
@@ -29,7 +48,9 @@ export function AuthGateDialog({ mode, loading = false, onSignIn }: AuthGateDial
         <p className="text-xs font-mono text-foreground border border-border bg-card/70 px-3 py-2">
           {isShareEdit
             ? 'If you want to join and edit this shared canvas, you must log in first.'
-            : 'Please log in to create, sync, and collaborate on your canvases.'}
+            : isShare
+              ? 'Sign in to share and collaborate on this canvas with your team.'
+              : 'Please log in to create, sync, and collaborate on your canvases.'}
         </p>
 
         <button

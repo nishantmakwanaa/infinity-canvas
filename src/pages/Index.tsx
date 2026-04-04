@@ -39,6 +39,12 @@ function clampDesktopSidebarWidth(value: number) {
   return Math.max(8, Math.min(20, value));
 }
 
+function firstName(value: string) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return 'User';
+  return trimmed.split(/\s+/)[0];
+}
+
 const Index = () => {
   useThemeTime();
   const { user, session, loading, signInWithGoogle, signOut } = useAuth();
@@ -76,6 +82,7 @@ const Index = () => {
 
   const [sidebarWidthPercent, setSidebarWidthPercent] = useState(18);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showGuestAuthDialog, setShowGuestAuthDialog] = useState(false);
   const desktopSidebarWidthRef = useRef(18);
   const historyPastRef = useRef<CanvasSnapshot[]>([]);
   const historyFutureRef = useRef<CanvasSnapshot[]>([]);
@@ -83,13 +90,14 @@ const Index = () => {
   const isRestoringHistoryRef = useRef(false);
   const lastSnapshotRef = useRef<CanvasSnapshot | null>(null);
   const lastSerializedSnapshotRef = useRef('');
+  const editorCapToastShownRef = useRef(false);
   const isMobile = useIsMobile();
   const [mobileToolSettingsOpen, setMobileToolSettingsOpen] = useState(false);
 
   const isLoggedIn = Boolean(session?.user?.id);
   const isShareEditRoute = parsedApiRequest?.kind === 'share-edit';
-  const showHomeAuthGate = !loading && !isLoggedIn && !rawUserToken;
   const showShareEditAuthGate = !loading && !isLoggedIn && isShareEditRoute;
+  const showGuestSignInAuthGate = !loading && !isLoggedIn && showGuestAuthDialog;
   const isReadOnlyMode = routeMode === 'readonly';
   const isRouteLoading = routeMode === 'loading';
   const isAuthRequiredMode = routeMode === 'auth-required';
@@ -97,6 +105,19 @@ const Index = () => {
   const isEditorMode = routeMode === 'home' || routeMode === 'editable';
   const effectiveCurrentCanvasId = rawUserToken ? (routeCanvasId || currentCanvasId) : currentCanvasId;
   const activeCanvasIdForCollab = rawUserToken ? (routeCanvasId || currentCanvasId) : (currentCanvasId || routeCanvasId);
+  const activeAccessCanvasId = effectiveCurrentCanvasId || activeCanvasIdForCollab;
+  const currentOwnedShareAccess = activeAccessCanvasId ? shareAccessByCanvasId[activeAccessCanvasId] : undefined;
+  const currentJoinedShareAccess = activeAccessCanvasId ? joinedCanvasAccessByCanvasId[activeAccessCanvasId] : undefined;
+  const allowCollaboratorsForCurrentCanvas = Boolean(
+    user?.id &&
+    isEditorMode &&
+    activeCanvasIdForCollab &&
+    (
+      currentOwnedShareAccess === 'editor' ||
+      currentJoinedShareAccess === 'editor' ||
+      (rawUserToken && parsedApiRequest?.kind === 'share-edit')
+    )
+  );
   const collaborationIdentity = useMemo(
     () => (user
       ? {
@@ -112,17 +133,33 @@ const Index = () => {
     collaborators,
     isConnected: collaborationConnected,
     toggleUserVisibility,
+    editorSlotGranted,
+    editorSlotActiveCount,
+    editorSlotLimitCount,
   } = useCanvasCollaboration(
     activeCanvasIdForCollab,
     collaborationIdentity,
-    Boolean(user?.id && isEditorMode && activeCanvasIdForCollab)
+    allowCollaboratorsForCurrentCanvas
   );
+
+  const collabEditLocked = allowCollaboratorsForCurrentCanvas && !editorSlotGranted;
+  const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked;
+  const canMutateCanvas = isEditorMode && !collabEditLocked;
 
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
   const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile && isEditorMode ? sidebarWidthPercent : 0;
   const effectiveCanvasLoading = isRouteLoading || (syncEnabled && isCanvasLoading);
   const showHeaderAndBars = !effectiveCanvasLoading;
   const activeCanvasName = currentCanvasName || routeCanvasName;
+  const visibleRemoteCursors = useMemo(
+    () => collaborators.filter((collab) => (
+      !collab.isSelf &&
+      collab.isVisible &&
+      Number.isFinite(Number((collab as any).cursorX)) &&
+      Number.isFinite(Number((collab as any).cursorY))
+    )),
+    [collaborators]
+  );
 
   const currentParsedName = parseCanvasRouteName(activeCanvasName);
   const pageItems = useMemo(
@@ -250,6 +287,18 @@ const Index = () => {
     void createCanvas(`${currentParsedName.canvasSlug}/${nextPage}`);
   };
 
+  const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
+    if (!canvasId) return;
+    if (rawUserToken) {
+      navigate('/', { replace: true });
+      window.setTimeout(() => {
+        void selectCanvas(canvasId);
+      }, 0);
+      return;
+    }
+    void selectCanvas(canvasId);
+  }, [navigate, rawUserToken, selectCanvas]);
+
   const onCanvasProfilerRender = useCallback<ProfilerOnRenderCallback>((_id, phase, actualDuration, baseDuration) => {
     if (phase === 'update' && actualDuration < 3) return;
     recordPerfMetric('render_commit', actualDuration, {
@@ -257,6 +306,22 @@ const Index = () => {
       base_duration_ms: Number(baseDuration.toFixed(2)),
     });
   }, []);
+
+  useEffect(() => {
+    if (isLoggedIn && showGuestAuthDialog) {
+      setShowGuestAuthDialog(false);
+    }
+  }, [isLoggedIn, showGuestAuthDialog]);
+
+  useEffect(() => {
+    if (!collabEditLocked) {
+      editorCapToastShownRef.current = false;
+      return;
+    }
+    if (editorCapToastShownRef.current) return;
+    editorCapToastShownRef.current = true;
+    toast.error(`Editor limit reached (${editorSlotLimitCount}). Try again shortly.`);
+  }, [collabEditLocked, editorSlotLimitCount]);
 
   useEffect(() => {
     if (!rawUserToken) {
@@ -272,14 +337,6 @@ const Index = () => {
       setRouteCanvasId(null);
       setRouteCanvasName(null);
       setRouteError('Invalid page API token');
-      return;
-    }
-
-    if (parsedApiRequest.kind === 'share-edit' && !session?.user?.id) {
-      setRouteMode('auth-required');
-      setRouteCanvasId(null);
-      setRouteCanvasName(null);
-      setRouteError('Login required to edit shared canvas');
       return;
     }
 
@@ -318,6 +375,7 @@ const Index = () => {
       const shareAccess = String((row as any)?.share_access || '').toLowerCase();
       const isShareRoute = Boolean((row as any)?.is_share);
       const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
+      const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
       if (isShareRoute && session?.user?.id && row?.canvas_id) {
         markJoinedCanvasAccess(row.canvas_id, isShareEditLink ? 'editor' : 'viewer');
       }
@@ -339,6 +397,11 @@ const Index = () => {
         typeof row.zoom === 'number' ? row.zoom : 1,
         (row.drawings as any[]) || []
       );
+      if (requiresAuthGate) {
+        setRouteMode('auth-required');
+        setRouteError('Login required to edit shared canvas');
+        return;
+      }
       setRouteMode('readonly');
     };
 
@@ -370,14 +433,21 @@ const Index = () => {
   }, [activeCanvasName, currentParsedName.canvasLabel, currentParsedName.pageLabel, isEditorMode, isLoggedIn, user]);
 
   useEffect(() => {
-    if (!user || !currentCanvasName || !isEditorMode) return;
+    if (!user || !currentCanvasName || !currentCanvasId || !isEditorMode) return;
     if (rawUserToken) return;
+
+    const isOwnedCurrentCanvas = canvases.some((canvas) => canvas.id === currentCanvasId);
+    if (!isOwnedCurrentCanvas) {
+      // Joined/shared canvases should not be rewritten to owner route for current user.
+      return;
+    }
+
     const desired = toOwnerPagePath(slugifyUsername(user.username), currentCanvasName, user.id);
     const currentRoute = `${window.location.pathname}${window.location.search}`;
     if (currentRoute !== desired) {
       navigate(desired, { replace: true });
     }
-  }, [currentCanvasName, isEditorMode, navigate, rawUserToken, user]);
+  }, [canvases, currentCanvasId, currentCanvasName, isEditorMode, navigate, rawUserToken, user]);
 
   useEffect(() => {
     if (isMobile) {
@@ -560,55 +630,80 @@ const Index = () => {
     );
   }
 
-  if (showHomeAuthGate || showShareEditAuthGate || isAuthRequiredMode) {
-    return (
-      <AuthGateDialog
-        mode={showShareEditAuthGate || isAuthRequiredMode ? 'share-edit' : 'home'}
-        loading={loading}
-        onSignIn={signInWithGoogle}
-      />
-    );
-  }
-
   return (
     <>
       <Profiler id="infinite-canvas" onRender={onCanvasProfilerRender}>
         <InfiniteCanvas
-          readOnly={isReadOnlyMode}
+          readOnly={effectiveReadOnlyMode}
           leftOffsetPercent={canvasLeftOffsetPercent}
           loading={effectiveCanvasLoading}
         />
       </Profiler>
 
-      {showHeaderAndBars && (isEditorMode || isReadOnlyMode) && (
+      {showHeaderAndBars && (isEditorMode || effectiveReadOnlyMode) && (
         <AppHeader
           user={user}
           loading={loading}
-          onSignIn={signInWithGoogle}
-          readOnlyMode={isReadOnlyMode}
-          forceShowCollaboratorsButton={Boolean(rawUserToken && user?.id)}
+          onSignIn={() => setShowGuestAuthDialog(true)}
+          readOnlyMode={effectiveReadOnlyMode}
+          forceShowCollaboratorsButton={allowCollaboratorsForCurrentCanvas}
           currentCanvasId={effectiveCurrentCanvasId}
           currentCanvasName={activeCanvasName}
           currentCanvasLabel={currentParsedName.canvasLabel}
           currentPageLabel={currentParsedName.pageLabel}
           pageItems={pageItems}
           onSelectPage={(id) => {
-            void selectCanvas(id);
+            handleSelectCanvasFromUi(id);
           }}
-          onCreatePage={isEditorMode ? handleCreatePage : undefined}
-          onRenameCanvas={isEditorMode && session?.user?.id ? renameCanvas : undefined}
-          onRenamePage={isEditorMode && session?.user?.id ? renamePage : undefined}
+          onCreatePage={canMutateCanvas ? handleCreatePage : undefined}
+          onRenameCanvas={canMutateCanvas && session?.user?.id ? renameCanvas : undefined}
+          onRenamePage={canMutateCanvas && session?.user?.id ? renamePage : undefined}
           leftOffsetPercent={canvasLeftOffsetPercent}
           showSidebarToggle={isLoggedIn && isEditorMode}
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
           collaborators={collaborators}
           collaborationConnected={collaborationConnected}
+          collaborationActiveCount={editorSlotActiveCount}
+          collaborationLimitCount={editorSlotLimitCount}
           onToggleCollaboratorVisibility={toggleUserVisibility}
         />
       )}
 
-      {isSidebarOpen && isEditorMode && (
+      {allowCollaboratorsForCurrentCanvas && visibleRemoteCursors.length > 0 && (
+        <div className="fixed inset-0 z-[45] pointer-events-none">
+          {visibleRemoteCursors.map((collab) => {
+            const x = Number((collab as any).cursorX);
+            const y = Number((collab as any).cursorY);
+            return (
+              <div
+                key={`cursor-${collab.userId}`}
+                className="absolute"
+                style={{ left: `${x}px`, top: `${y}px`, transform: 'translate(-1px, -1px)' }}
+              >
+                <div
+                  className="w-0 h-0"
+                  style={{
+                    borderLeft: '8px solid transparent',
+                    borderRight: '8px solid transparent',
+                    borderBottom: `14px solid ${collab.color}`,
+                    transform: 'rotate(-22deg)',
+                    transformOrigin: '50% 60%',
+                  }}
+                />
+                <div
+                  className="mt-0.5 ml-2 px-1.5 py-0.5 text-[9px] font-mono text-white rounded-sm"
+                  style={{ backgroundColor: collab.color }}
+                >
+                  {firstName(collab.displayName)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {isSidebarOpen && canMutateCanvas && (
         <>
           {isMobile && (
             <div
@@ -625,7 +720,7 @@ const Index = () => {
             currentCanvasId={effectiveCurrentCanvasId}
             onCreateCanvas={() => createCanvas()}
             onSelectCanvas={(id) => {
-              selectCanvas(id);
+              handleSelectCanvasFromUi(id);
               if (isMobile) setIsSidebarOpen(false);
             }}
             onDeleteCanvases={(ids) => deleteCanvases(ids)}
@@ -638,24 +733,24 @@ const Index = () => {
         </>
       )}
 
-      {showHeaderAndBars && (isEditorMode || isReadOnlyMode) && (
+      {showHeaderAndBars && (canMutateCanvas || effectiveReadOnlyMode) && (
         <Toolbar
           leftOffsetPercent={canvasLeftOffsetPercent}
           isMobile={isMobile}
-          allowedToolIds={isReadOnlyMode ? ['select', 'hand'] : undefined}
-          showMobileSettingsButton={isEditorMode && isMobile}
+          allowedToolIds={effectiveReadOnlyMode ? ['select', 'hand'] : undefined}
+          showMobileSettingsButton={canMutateCanvas && isMobile}
           isMobileSettingsOpen={mobileToolSettingsOpen}
-          onToggleMobileSettings={isEditorMode ? (() => setMobileToolSettingsOpen((prev) => !prev)) : undefined}
-          onOpenMobileSettings={isEditorMode ? (() => setMobileToolSettingsOpen(true)) : undefined}
-          onUndo={isEditorMode ? handleUndo : undefined}
-          onRedo={isEditorMode ? handleRedo : undefined}
-          onCopy={isEditorMode ? copySelectedBlocks : undefined}
-          onCut={isEditorMode ? cutSelectedBlocks : undefined}
-          onDelete={isEditorMode ? deleteSelectedBlocks : undefined}
+          onToggleMobileSettings={canMutateCanvas ? (() => setMobileToolSettingsOpen((prev) => !prev)) : undefined}
+          onOpenMobileSettings={canMutateCanvas ? (() => setMobileToolSettingsOpen(true)) : undefined}
+          onUndo={canMutateCanvas ? handleUndo : undefined}
+          onRedo={canMutateCanvas ? handleRedo : undefined}
+          onCopy={canMutateCanvas ? copySelectedBlocks : undefined}
+          onCut={canMutateCanvas ? cutSelectedBlocks : undefined}
+          onDelete={canMutateCanvas ? deleteSelectedBlocks : undefined}
         />
       )}
 
-      {showHeaderAndBars && isEditorMode && (
+      {showHeaderAndBars && canMutateCanvas && (
         <ToolSettingsPanel
           isMobile={isMobile}
           mobileOpen={mobileToolSettingsOpen}
@@ -677,6 +772,27 @@ const Index = () => {
             <span className="text-[11px] font-mono font-bold text-foreground block leading-tight">NISHANT</span>
           </div>
         )
+      )}
+
+      {showGuestSignInAuthGate && (
+        <AuthGateDialog
+          mode={rawUserToken ? 'share' : 'home'}
+          loading={loading}
+          onSignIn={signInWithGoogle}
+          presentation="overlay"
+          dismissOnBackdrop={true}
+          onClose={() => setShowGuestAuthDialog(false)}
+        />
+      )}
+
+      {(showShareEditAuthGate || isAuthRequiredMode) && (
+        <AuthGateDialog
+          mode="share-edit"
+          loading={loading}
+          onSignIn={signInWithGoogle}
+          presentation="overlay"
+          dismissOnBackdrop={false}
+        />
       )}
     </>
   );

@@ -34,6 +34,17 @@ create table if not exists public.shared_canvases (
   created_at      timestamptz not null default now()
 );
 
+-- Active editor slots used to enforce strict concurrent edit limits per canvas.
+create table if not exists public.canvas_editor_sessions (
+  id            uuid        primary key default gen_random_uuid(),
+  canvas_id     uuid        not null references public.canvases(id) on delete cascade,
+  user_id       uuid        not null references auth.users(id) on delete cascade,
+  client_id     text        not null default '',
+  created_at    timestamptz not null default now(),
+  last_seen_at  timestamptz not null default now(),
+  expires_at    timestamptz not null default (now() + interval '90 seconds')
+);
+
 alter table public.shared_canvases
   add column if not exists page_name text;
 
@@ -126,6 +137,14 @@ create index if not exists shared_canvases_share_lookup_idx
   on public.shared_canvases(share_token, owner_username, canvas_id);
 create index if not exists shared_canvases_canvas_access_idx
   on public.shared_canvases(canvas_id, access_level);
+
+-- canvas_editor_sessions
+create unique index if not exists canvas_editor_sessions_canvas_user_key
+  on public.canvas_editor_sessions(canvas_id, user_id);
+create index if not exists canvas_editor_sessions_canvas_expires_idx
+  on public.canvas_editor_sessions(canvas_id, expires_at desc);
+create index if not exists canvas_editor_sessions_expires_idx
+  on public.canvas_editor_sessions(expires_at);
 
 do $$
 begin
@@ -261,26 +280,60 @@ drop policy if exists "canvases_update_owner_or_shared_editor" on public.canvase
 create policy "canvases_update_owner_or_shared_editor"
 on public.canvases for update
 using (
-  auth.uid() = user_id
-  or (
-    auth.uid() is not null
-    and exists (
+  (
+    auth.uid() = user_id
+    or (
+      auth.uid() is not null
+      and exists (
+        select 1
+        from public.shared_canvases sc
+        where sc.canvas_id = canvases.id
+          and sc.access_level = 'editor'
+      )
+    )
+  )
+  and (
+    not exists (
       select 1
-      from public.shared_canvases sc
-      where sc.canvas_id = canvases.id
-        and sc.access_level = 'editor'
+      from public.shared_canvases sc_limit
+      where sc_limit.canvas_id = canvases.id
+        and sc_limit.access_level = 'editor'
+    )
+    or exists (
+      select 1
+      from public.canvas_editor_sessions ces
+      where ces.canvas_id = canvases.id
+        and ces.user_id = auth.uid()
+        and ces.expires_at > now()
     )
   )
 )
 with check (
-  auth.uid() = user_id
-  or (
-    auth.uid() is not null
-    and exists (
+  (
+    auth.uid() = user_id
+    or (
+      auth.uid() is not null
+      and exists (
+        select 1
+        from public.shared_canvases sc
+        where sc.canvas_id = canvases.id
+          and sc.access_level = 'editor'
+      )
+    )
+  )
+  and (
+    not exists (
       select 1
-      from public.shared_canvases sc
-      where sc.canvas_id = canvases.id
-        and sc.access_level = 'editor'
+      from public.shared_canvases sc_limit
+      where sc_limit.canvas_id = canvases.id
+        and sc_limit.access_level = 'editor'
+    )
+    or exists (
+      select 1
+      from public.canvas_editor_sessions ces
+      where ces.canvas_id = canvases.id
+        and ces.user_id = auth.uid()
+        and ces.expires_at > now()
     )
   )
 );
@@ -348,8 +401,11 @@ grant select, insert, update, delete on table public.canvases to authenticated;
 revoke select on table public.shared_canvases from anon;
 grant select, insert, update, delete on table public.shared_canvases to authenticated;
 
+revoke all on table public.canvas_editor_sessions from anon, authenticated;
+
 grant all on table public.canvases to service_role;
 grant all on table public.shared_canvases to service_role;
+grant all on table public.canvas_editor_sessions to service_role;
 
 -- -----------------------------------------------------------------------------
 -- RPC helpers
@@ -457,6 +513,131 @@ $$;
 
 revoke all on function public.upsert_canvas_share(uuid, text) from public;
 grant execute on function public.upsert_canvas_share(uuid, text) to authenticated;
+
+
+create or replace function public.claim_editor_slot(
+  p_canvas_id uuid,
+  p_client_id text default null,
+  p_ttl_seconds integer default 90
+)
+returns table (
+  granted boolean,
+  active_count integer,
+  limit_count integer
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+  v_limit integer := 20;
+  v_ttl integer := greatest(30, least(300, coalesce(p_ttl_seconds, 90)));
+  v_has_access boolean := false;
+  v_exists boolean := false;
+  v_active integer := 0;
+begin
+  if p_canvas_id is null or v_user_id is null then
+    return query select false, 0, v_limit;
+    return;
+  end if;
+
+  select exists (
+    select 1
+    from public.canvases c
+    left join public.shared_canvases sc on sc.canvas_id = c.id
+    where c.id = p_canvas_id
+      and (
+        c.user_id = v_user_id
+        or sc.access_level = 'editor'
+      )
+  ) into v_has_access;
+
+  if not v_has_access then
+    return query select false, 0, v_limit;
+    return;
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('editor_slot:' || p_canvas_id::text));
+
+  delete from public.canvas_editor_sessions
+  where canvas_id = p_canvas_id
+    and expires_at <= now();
+
+  select exists (
+    select 1
+    from public.canvas_editor_sessions
+    where canvas_id = p_canvas_id
+      and user_id = v_user_id
+  ) into v_exists;
+
+  if not v_exists then
+    select count(*)
+    into v_active
+    from public.canvas_editor_sessions
+    where canvas_id = p_canvas_id
+      and expires_at > now();
+
+    if v_active >= v_limit then
+      return query select false, v_active, v_limit;
+      return;
+    end if;
+  end if;
+
+  insert into public.canvas_editor_sessions (canvas_id, user_id, client_id, last_seen_at, expires_at)
+  values (
+    p_canvas_id,
+    v_user_id,
+    coalesce(p_client_id, ''),
+    now(),
+    now() + make_interval(secs => v_ttl)
+  )
+  on conflict (canvas_id, user_id)
+  do update
+  set
+    client_id = excluded.client_id,
+    last_seen_at = now(),
+    expires_at = now() + make_interval(secs => v_ttl);
+
+  select count(*)
+  into v_active
+  from public.canvas_editor_sessions
+  where canvas_id = p_canvas_id
+    and expires_at > now();
+
+  return query select true, v_active, v_limit;
+end;
+$$;
+
+revoke all on function public.claim_editor_slot(uuid, text, integer) from public;
+grant execute on function public.claim_editor_slot(uuid, text, integer) to authenticated;
+
+
+create or replace function public.release_editor_slot(
+  p_canvas_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_user_id uuid := auth.uid();
+begin
+  if p_canvas_id is null or v_user_id is null then
+    return false;
+  end if;
+
+  delete from public.canvas_editor_sessions
+  where canvas_id = p_canvas_id
+    and user_id = v_user_id;
+
+  return found;
+end;
+$$;
+
+revoke all on function public.release_editor_slot(uuid) from public;
+grant execute on function public.release_editor_slot(uuid) to authenticated;
 
 
 -- Resolves segmented API route:

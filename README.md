@@ -20,6 +20,8 @@ The app is built with React + TypeScript + Vite and uses Supabase for auth, pers
 - Owner + shared route resolution through Supabase RPC
 - Share popover in header (menu-style, not centered modal)
 - Publish as viewer/editor for signed-in users with link
+- On-demand branded auth dialog for guests (logo, app name, description, Google sign-in)
+- Edit-share links are hard-gated until login (no background canvas access before auth)
 - Live collaborator presence list (users icon near share)
 - Per-collaborator eye toggle to show/hide incoming live changes
 - Realtime collaboration snapshots over Supabase Realtime channels
@@ -137,6 +139,9 @@ Realtime behavior:
 
 - Presence heartbeat + tool/pan/zoom metadata sync.
 - Throttled canvas snapshot broadcast for low-latency collaboration.
+- Snapshot request/response on join so late joiners receive latest canvas state immediately.
+- Automatic collaboration channel reconnect with backoff after timeout/error.
+- Strict server-side cap of 20 concurrent editors per editable shared canvas.
 - Shared editor users can persist updates through Supabase RLS policy.
 
 ## Load Test Configuration
@@ -179,11 +184,14 @@ Apply migration SQL from:
 
 This migration includes:
 - `canvases` and `shared_canvases` tables
+- `canvas_editor_sessions` table for editor slot tracking
 - Route field sync triggers
 - Owner and shared route resolver RPC functions
 - Share permission RPC (`upsert_canvas_share`)
+- Editor-slot RPCs (`claim_editor_slot`, `release_editor_slot`) with hard limit enforcement
 - Share editor/viewer access control (`shared_canvases.access_level`)
 - Shared editor update policy for collaborative persistence
+- Auth hardening for direct table reads (anon select revoked from `canvases` and `shared_canvases`)
 - Compact token decode + high-volume lookup indexes
 - Row-level security policies
 
@@ -234,6 +242,9 @@ These changes improve low-bandwidth behavior and responsiveness on lower-end dev
 
 - Routing ownership uses `username` derived from email local-part (stable and unchanged)
 - UI profile menu shows OAuth display name (first + last name when available)
+- Guests opening the app home route can use guest canvas directly; clicking `Sign in to share` opens the CNVS auth dialog
+- Guests opening edit-share links (`se` token routes) are blocked on the auth dialog until login
+- Edit permissions for shared links still require access resolution through `open_page_api_link`
 
 This keeps route architecture stable while improving visible profile UX.
 
