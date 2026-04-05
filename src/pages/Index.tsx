@@ -22,6 +22,7 @@ import { useLocation } from 'react-router-dom';
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
 const DEFAULT_SITE_TITLE = 'CNVS | Infinite Canvas Workspace for Teams';
 const APP_META_DESCRIPTION = 'CNVS is an infinite canvas workspace for notes, drawings, media, and real-time collaboration. Organize visual thinking with multi-page canvases and share with viewer or editor access.';
+const LAST_OPENED_CANVAS_KEY_PREFIX = 'cnvs_last_opened_canvas_v1_';
 
 type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found' | 'auth-required';
 
@@ -39,6 +40,15 @@ interface CanvasSnapshot {
 
 function slugifyUsername(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, '-');
+}
+
+function parseOwnerUserIdFromDecodedOwner(decodedOwner: string | null | undefined) {
+  const raw = String(decodedOwner || '').trim();
+  if (!raw) return null;
+  const separatorIndex = raw.lastIndexOf('|');
+  if (separatorIndex < 0) return null;
+  const userId = raw.slice(separatorIndex + 1).trim();
+  return userId || null;
 }
 
 function clampDesktopSidebarWidth(value: number) {
@@ -60,6 +70,7 @@ const Index = () => {
   const [routeCanvasId, setRouteCanvasId] = useState<string | null>(null);
   const [routeCanvasName, setRouteCanvasName] = useState<string | null>(null);
   const [routeError, setRouteError] = useState('');
+  const [collaboratorOwnerUserId, setCollaboratorOwnerUserId] = useState<string | null>(null);
 
   const syncEnabled = routeMode === 'home' || routeMode === 'editable';
 
@@ -147,6 +158,10 @@ const Index = () => {
     )
   );
   const collaborationActivationReady = Boolean(activeCanvasIdForCollab) && !isRouteLoading && !isCanvasLoading;
+  const ownerUserIdFromToken = useMemo(
+    () => parseOwnerUserIdFromDecodedOwner(parsedApiRequest?.decodedOwner),
+    [parsedApiRequest?.decodedOwner]
+  );
   const readOnlyShareUrl = useMemo(() => {
     if (typeof window === 'undefined') return null;
     if (!(rawUserToken && parsedApiRequest?.kind === 'share')) return null;
@@ -206,9 +221,15 @@ const Index = () => {
   const editorSlotLimitCount = useSocketTransport ? socketEditorSlotLimitCount : realtimeEditorSlotLimitCount;
   const editorSlotCapReached = editorSlotLimitCount > 0 && editorSlotActiveCount >= editorSlotLimitCount;
 
+  const hasWritePrivileges = !activeAccessCanvasId
+    || isCurrentCanvasOwned
+    || currentOwnedShareAccess === 'editor'
+    || currentJoinedShareAccess === 'editor'
+    || Boolean(rawUserToken && parsedApiRequest?.kind === 'share-edit');
+
   const collabEditLocked = requireEditorSlotForCurrentCanvas && !editorSlotGranted && !isCurrentCanvasOwned && editorSlotCapReached;
-  const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked;
-  const canMutateCanvas = isEditorMode && !collabEditLocked;
+  const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked || (isEditorMode && !hasWritePrivileges);
+  const canMutateCanvas = isEditorMode && !effectiveReadOnlyMode;
 
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
   const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile && (isEditorMode || effectiveReadOnlyMode)
@@ -238,6 +259,65 @@ const Index = () => {
     },
     [canvases, currentParsedName.canvasSlug, currentParsedName.pageLabel, isReadOnlyMode, routeCanvasId]
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveCollaboratorOwnerUserId = async () => {
+      if (!activeAccessCanvasId || !showCollaboratorsButtonForCurrentCanvas) {
+        setCollaboratorOwnerUserId(null);
+        return;
+      }
+
+      if (isCurrentCanvasOwned && user?.id) {
+        setCollaboratorOwnerUserId(user.id);
+        return;
+      }
+
+      if (rawUserToken && ownerUserIdFromToken) {
+        setCollaboratorOwnerUserId(ownerUserIdFromToken);
+        return;
+      }
+
+      const shareLookup = await supabase
+        .from('shared_canvases')
+        .select('owner_user_id,created_at')
+        .eq('canvas_id', activeAccessCanvasId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (cancelled) return;
+      const sharedOwnerId = String((shareLookup.data as { owner_user_id?: string | null } | null)?.owner_user_id || '').trim();
+      if (sharedOwnerId) {
+        setCollaboratorOwnerUserId(sharedOwnerId);
+        return;
+      }
+
+      const ownerLookup = await supabase
+        .from('canvases')
+        .select('user_id')
+        .eq('id', activeAccessCanvasId)
+        .maybeSingle();
+
+      if (cancelled) return;
+      const ownerId = String((ownerLookup.data as { user_id?: string | null } | null)?.user_id || '').trim();
+      setCollaboratorOwnerUserId(ownerId || null);
+    };
+
+    void resolveCollaboratorOwnerUserId();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeAccessCanvasId,
+    isCurrentCanvasOwned,
+    ownerUserIdFromToken,
+    rawUserToken,
+    showCollaboratorsButtonForCurrentCanvas,
+    user?.id,
+  ]);
 
   const cloneSnapshot = (snapshot: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(snapshot));
 
@@ -396,16 +476,39 @@ const Index = () => {
   const handleDeleteCanvasesFromUi = useCallback((ids: string[]) => {
     if (!ids.length) return;
     if (rawUserToken) {
-      pendingSidebarActionRef.current = { type: 'delete', ids: [...ids] };
-      setRouteMode('home');
-      setRouteCanvasId(null);
-      setRouteCanvasName(null);
-      setRouteError('');
-      navigate('/', { replace: true });
+      // Leaving from a shared token route should happen immediately, then return home.
+      void (async () => {
+        const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+        if (session?.user?.id && uniqueIds.length) {
+          const leaveRpc: any = await supabase.rpc('leave_joined_canvases', {
+            p_canvas_ids: uniqueIds,
+          });
+
+          if (leaveRpc?.error) {
+            const fallback = await supabase
+              .from('canvas_permissions')
+              .delete()
+              .eq('user_id', session.user.id)
+              .in('canvas_id', uniqueIds);
+
+            if (fallback.error) {
+              toast.error('Unable to leave selected collaborative canvas right now.');
+            }
+          }
+        }
+
+        // Clear route-mode snapshot so home never renders stale shared content.
+        useCanvasStore.getState().loadCanvas([], { x: 0, y: 0 }, 1, []);
+        setRouteMode('home');
+        setRouteCanvasId(null);
+        setRouteCanvasName(null);
+        setRouteError('');
+        navigate('/', { replace: true });
+      })();
       return;
     }
     void deleteCanvases(ids);
-  }, [deleteCanvases, navigate, rawUserToken]);
+  }, [deleteCanvases, navigate, rawUserToken, session?.user?.id]);
 
   useEffect(() => {
     if (rawUserToken) return;
@@ -520,6 +623,7 @@ const Index = () => {
 
         const row = Array.isArray(data) ? data[0] : data;
         if (error || !row?.canvas_id) {
+          setCollaboratorOwnerUserId(null);
           if (session?.user?.id) {
             setRouteMode('home');
             setRouteCanvasId(null);
@@ -540,12 +644,14 @@ const Index = () => {
         const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
         const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
         const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
+        const rowOwnerUserId = String((row as { owner_user_id?: string | null })?.owner_user_id || '').trim();
+        setCollaboratorOwnerUserId(rowOwnerUserId || ownerUserIdFromToken || null);
 
         // If owner opens a public share link while authenticated, route to owner path immediately.
         if (
           isShareRoute
           && session?.user?.id
-          && String((row as any)?.owner_user_id || '').trim() === session.user.id
+          && rowOwnerUserId === session.user.id
         ) {
           const ownerUsername = String(user?.username || (row as any)?.owner_username || '').trim();
           if (ownerUsername) {
@@ -558,6 +664,15 @@ const Index = () => {
         if (isShareRoute && session?.user?.id && row?.canvas_id) {
           const requestedAccess = (shareAccess === 'editor' || isShareEditLink) ? 'editor' : 'viewer';
           markJoinedCanvasAccess(row.canvas_id, requestedAccess, { canvasName: resolvedName });
+
+          // Make joined share the startup target after returning to home.
+          try {
+            localStorage.setItem(`${LAST_OPENED_CANVAS_KEY_PREFIX}${session.user.id}`, String(row.canvas_id));
+          } catch {
+            // Ignore storage access errors.
+          }
+          void supabase.rpc('set_last_opened_canvas_id', { p_canvas_id: row.canvas_id });
+
           if (cancelled) return;
         }
 
@@ -600,7 +715,44 @@ const Index = () => {
     return () => {
       cancelled = true;
     };
-  }, [markJoinedCanvasAccess, navigate, parsedApiRequest, rawUserToken, session?.user?.id, user]);
+  }, [markJoinedCanvasAccess, navigate, ownerUserIdFromToken, parsedApiRequest, rawUserToken, session?.user?.id, user]);
+
+  useEffect(() => {
+    if (!rawUserToken || !parsedApiRequest) return;
+
+    let stopped = false;
+    const validateRouteAccess = async () => {
+      if (stopped) return;
+      if (document.visibilityState !== 'visible') return;
+
+      const rpc = await supabase.rpc('open_page_api_link', {
+        p_user_token: parsedApiRequest.userToken,
+        p_canvas_token: parsedApiRequest.canvasToken,
+        p_page_token: parsedApiRequest.pageToken,
+      });
+
+      if (stopped) return;
+      const row = Array.isArray(rpc?.data) ? rpc.data[0] : rpc?.data;
+      if (rpc?.error || !row?.canvas_id) {
+        setCollaboratorOwnerUserId(null);
+        useCanvasStore.getState().loadCanvas([], { x: 0, y: 0 }, 1, []);
+        setRouteMode('home');
+        setRouteCanvasId(null);
+        setRouteCanvasName(null);
+        setRouteError('');
+        navigate('/', { replace: true });
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void validateRouteAccess();
+    }, 10_000);
+
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+    };
+  }, [navigate, parsedApiRequest, rawUserToken]);
 
   useEffect(() => {
     if (routeMode !== 'editable' || !routeCanvasId || !syncEnabled) return;
@@ -936,6 +1088,7 @@ const Index = () => {
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
           collaborators={collaborators}
+          ownerUserId={collaboratorOwnerUserId}
           collaborationConnected={collaborationConnected}
           collaborationActiveCount={editorSlotActiveCount}
           collaborationLimitCount={editorSlotLimitCount}

@@ -65,15 +65,35 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
     }
 
     dragRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, origX: block.x, origY: block.y };
-    const onMove = (ev: PointerEvent) => {
+    let rafId: number | null = null;
+    let pendingClientX = e.clientX;
+    let pendingClientY = e.clientY;
+
+    const flushDrag = () => {
+      rafId = null;
       if (!dragRef.current.dragging) return;
       updateBlock(block.id, {
-        x: dragRef.current.origX + (ev.clientX - dragRef.current.startX) / zoom,
-        y: dragRef.current.origY + (ev.clientY - dragRef.current.startY) / zoom,
+        x: dragRef.current.origX + (pendingClientX - dragRef.current.startX) / zoom,
+        y: dragRef.current.origY + (pendingClientY - dragRef.current.startY) / zoom,
       });
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      if (!dragRef.current.dragging) return;
+      pendingClientX = ev.clientX;
+      pendingClientY = ev.clientY;
+      if (ev.pointerType === 'touch') {
+        ev.preventDefault();
+      }
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(flushDrag);
     };
     const onUp = () => {
       dragRef.current.dragging = false;
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);

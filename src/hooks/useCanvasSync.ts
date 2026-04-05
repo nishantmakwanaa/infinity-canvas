@@ -243,6 +243,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const lastAutoLoadAtByUserRef = useRef<Record<string, number>>({});
   const collectionsRefreshInFlightRef = useRef(false);
   const lastCollectionsRefreshAtRef = useRef(0);
+  const accessRecoveryInFlightRef = useRef(false);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
   const [sharedCanvases, setSharedCanvases] = useState<CanvasMeta[]>([]);
   const [shareAccessByCanvasId, setShareAccessByCanvasId] = useState<Record<string, CanvasAccessLevel>>({});
@@ -1007,7 +1008,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     isLoadingRef.current = true;
     setIsCanvasLoading(true);
 
-    const { owned: list, shareAccess } = await refreshAllCanvasCollections(userId);
+    const { owned: list, shared: joinedList, shareAccess } = await refreshAllCanvasCollections(userId);
     if (!list) {
       isLoadingRef.current = false;
       setIsCanvasLoading(false);
@@ -1017,6 +1018,10 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       isLoadingRef.current = false;
       return;
     }
+
+    const joined = joinedList || [];
+    const allAccessible = [...list, ...joined.filter((canvas) => !list.some((owned) => owned.id === canvas.id))];
+    const accessibleById = new Map(allAccessible.map((canvas) => [canvas.id, canvas]));
 
     const firstOwnedPrivateFromAccess = list.find((canvas) => !shareAccess?.[canvas.id]);
 
@@ -1042,7 +1047,13 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
 
     const firstOwnedPrivateByQuery = list.find((canvas) => !sharedOwnedIdSet.has(canvas.id));
-    const first = firstOwnedPrivateFromAccess || firstOwnedPrivateByQuery || list[0];
+
+    const localLastOpenedId = readLastOpenedCanvasId(userId);
+    const serverLastOpenedId = await readServerLastOpenedCanvasId();
+    const preferredLastOpenedId = [localLastOpenedId, serverLastOpenedId].find((id) => Boolean(id && accessibleById.has(id))) || null;
+    const firstFromLastOpened = preferredLastOpenedId ? accessibleById.get(preferredLastOpenedId) : null;
+
+    const first = firstFromLastOpened || firstOwnedPrivateFromAccess || firstOwnedPrivateByQuery || allAccessible[0] || list[0];
     const guestSnapshot = readGuestSnapshot();
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
 
@@ -1137,7 +1148,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
-  }, [ensureSingleBootstrapCanvas, loadCanvasById, refreshAllCanvasCollections, warnPermissionIssue]);
+  }, [ensureSingleBootstrapCanvas, loadCanvasById, readServerLastOpenedCanvasId, refreshAllCanvasCollections, warnPermissionIssue]);
 
   const createCanvas = useCallback(async (name?: string) => {
     if (!enabled || !session?.user?.id) return;
@@ -1841,6 +1852,33 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       window.removeEventListener('cnvs-share-access-updated', onShareAccessUpdated as EventListener);
     };
   }, [enabled, refreshAllCanvasCollectionsThrottled, session?.user?.id]);
+
+  useEffect(() => {
+    if (!enabled || !session?.user?.id) return;
+    if (isLoadingRef.current || accessRecoveryInFlightRef.current) return;
+
+    const activeCanvasId = currentCanvasIdRef.current;
+    if (!activeCanvasId) return;
+
+    const stillOwned = canvases.some((canvas) => canvas.id === activeCanvasId);
+    const stillJoined = sharedCanvases.some((canvas) => canvas.id === activeCanvasId);
+    if (stillOwned || stillJoined) return;
+
+    const nextCanvas = canvases[0] || sharedCanvases[0] || null;
+    accessRecoveryInFlightRef.current = true;
+
+    void (async () => {
+      try {
+        if (nextCanvas?.id) {
+          await loadCanvasById(nextCanvas.id, session.user.id);
+          return;
+        }
+        await createCanvas();
+      } finally {
+        accessRecoveryInFlightRef.current = false;
+      }
+    })();
+  }, [canvases, createCanvas, enabled, loadCanvasById, session?.user?.id, sharedCanvases]);
 
   useEffect(() => {
     if (!enabled || !session?.user?.id) return;

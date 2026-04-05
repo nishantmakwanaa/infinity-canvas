@@ -147,6 +147,13 @@
   pointer-events: none !important;
 }
 
+@media (max-width: 767px) {
+  .cnvs-media-embed {
+    touch-action: none;
+    overscroll-behavior: contain;
+  }
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;

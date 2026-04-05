@@ -46,6 +46,7 @@ interface AppHeaderProps {
     color: string;
     isSelf?: boolean;
   }[];
+  ownerUserId?: string | null;
   collaborationConnected?: boolean;
   collaborationActiveCount?: number;
   collaborationLimitCount?: number;
@@ -93,6 +94,7 @@ export function AppHeader({
   onRenameCanvas,
   onRenamePage,
   collaborators = [],
+  ownerUserId = null,
   collaborationConnected = false,
   collaborationActiveCount = 0,
   collaborationLimitCount = 20,
@@ -132,6 +134,7 @@ export function AppHeader({
     user && onToggleCollaboratorVisibility && forceShowCollaboratorsButton
   );
   const canCopyReadOnlyShareUrl = Boolean(readOnlyMode && !canShareCurrentCanvas && readOnlyShareUrl);
+  const isOwnerShareControls = Boolean(canShareCurrentCanvas);
   const effectiveShareUrl = canCopyReadOnlyShareUrl ? (readOnlyShareUrl || '') : shareUrl;
 
   const emitShareAccessUpdated = useCallback((payload?: {
@@ -161,7 +164,7 @@ export function AppHeader({
     return toPageApiUrl(path);
   };
 
-  const resolveShareContext = async () => {
+  const resolveShareContext = async (options?: { quiet?: boolean }) => {
     if (!user) return null;
     const canvas = currentCanvasId
       ? { id: currentCanvasId }
@@ -174,7 +177,9 @@ export function AppHeader({
         .single()).data;
 
     if (!canvas) {
-      toast.error('No canvas found');
+      if (!options?.quiet) {
+        toast.error('No canvas found');
+      }
       return null;
     }
 
@@ -362,13 +367,7 @@ export function AppHeader({
 
   const loadShareState = async () => {
     if (!user) return;
-    if (!canShareCurrentCanvas) {
-      setIsPublished(false);
-      setShareUrl('');
-      setPublishedCanvasId(null);
-      return;
-    }
-    const context = await resolveShareContext();
+    const context = await resolveShareContext({ quiet: true });
     if (!context) return;
 
     const { data, error } = await supabase
@@ -405,7 +404,7 @@ export function AppHeader({
     const access = String((activeRow as any)?.access_level || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
     const ownerFromRow = String((activeRow as any)?.owner_username || '').trim();
     const routeOwner = ownerFromRow || context.routeOwner;
-    const nextShareUrl = buildShareUrl(routeOwner, shareToken, access, user.id);
+    const nextShareUrl = buildShareUrl(routeOwner, shareToken, access, canShareCurrentCanvas ? user.id : undefined);
 
     setShareAccessLevel(access);
     setShareUrl(nextShareUrl);
@@ -420,11 +419,11 @@ export function AppHeader({
       return;
     }
 
-    if (!isPublished || !shareUrl) {
-      toast.info('Publish first to copy the public link');
+    if (!effectiveShareUrl) {
+      toast.info(canShareCurrentCanvas ? 'Publish first to copy the public link' : 'No active shared link available right now.');
       return;
     }
-    await navigator.clipboard.writeText(shareUrl);
+    await navigator.clipboard.writeText(effectiveShareUrl);
     toast.success('Share link copied!');
   };
 
@@ -814,35 +813,43 @@ export function AppHeader({
                   </div>
                 ) : (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto no-scrollbar">
-                    {collaborators.map((collab) => (
-                      <div key={collab.userId} className="flex items-center justify-between border border-border px-2 py-1.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {collab.avatarUrl ? (
-                            <img src={collab.avatarUrl} alt="" className="w-6 h-6 object-cover" referrerPolicy="no-referrer" />
-                          ) : (
-                            <div
-                              className="w-6 h-6 text-[10px] font-mono text-white flex items-center justify-center"
-                              style={{ backgroundColor: collab.color }}
-                            >
-                              {(collab.displayName || 'U').slice(0, 1).toUpperCase()}
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <div className="text-[11px] font-mono text-foreground truncate">{collab.displayName}{collab.isSelf ? ' (You)' : ''}</div>
-                            <div className="text-[10px] font-mono text-muted-foreground truncate">
-                              {collab.activeTool ? `Tool: ${collab.activeTool}` : 'Browsing'}
+                    {collaborators.map((collab) => {
+                      const isOwnerCollaborator = Boolean(ownerUserId && collab.userId === ownerUserId);
+                      return (
+                        <div key={collab.userId} className="flex items-center justify-between border border-border px-2 py-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {collab.avatarUrl ? (
+                              <img src={collab.avatarUrl} alt="" className="w-6 h-6 object-cover" referrerPolicy="no-referrer" />
+                            ) : (
+                              <div
+                                className="w-6 h-6 text-[10px] font-mono text-white flex items-center justify-center"
+                                style={{ backgroundColor: collab.color }}
+                              >
+                                {(collab.displayName || 'U').slice(0, 1).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="text-[11px] font-mono text-foreground flex items-center gap-1 min-w-0">
+                                <span className="truncate">{collab.displayName}{collab.isSelf ? ' (You)' : ''}</span>
+                                {isOwnerCollaborator && (
+                                  <span className="inline-flex items-center h-4 px-1 border border-foreground text-[9px] uppercase tracking-wide">Owner</span>
+                                )}
+                              </div>
+                              <div className="text-[10px] font-mono text-muted-foreground truncate">
+                                {collab.activeTool ? `Tool: ${collab.activeTool}` : 'Browsing'}
+                              </div>
                             </div>
                           </div>
+                          <button
+                            className="toolbar-btn w-7 h-7"
+                            title={collab.isVisible ? 'Hide this user changes' : 'Show this user changes'}
+                            onClick={() => onToggleCollaboratorVisibility?.(collab.userId)}
+                          >
+                            {collab.isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
+                          </button>
                         </div>
-                        <button
-                          className="toolbar-btn w-7 h-7"
-                          title={collab.isVisible ? 'Hide this user changes' : 'Show this user changes'}
-                          onClick={() => onToggleCollaboratorVisibility?.(collab.userId)}
-                        >
-                          {collab.isVisible ? <Eye size={12} /> : <EyeOff size={12} />}
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -859,15 +866,15 @@ export function AppHeader({
                 setShowMenu(false);
                 setShowShareMenu((prev) => {
                   const next = !prev;
-                  if (next && canShareCurrentCanvas) {
+                  if (next) {
                     void loadShareState();
                   }
                   return next;
                 });
               }}
-              disabled={sharing || (!canShareCurrentCanvas && !canCopyReadOnlyShareUrl)}
+              disabled={sharing}
               className="toolbar-btn"
-              title={canShareCurrentCanvas ? 'Share canvas' : canCopyReadOnlyShareUrl ? 'Copy this shared link' : 'Only owner can share this canvas'}
+              title={isOwnerShareControls ? 'Share canvas' : 'Copy shared link'}
             >
               <Share2 size={14} />
             </button>
@@ -878,11 +885,13 @@ export function AppHeader({
                   <div className="text-[10px] font-mono text-muted-foreground">
                     {canCopyReadOnlyShareUrl
                       ? 'This canvas is opened from a view-only public link.'
-                      : 'Publish to make this page public. Unpublish hides it from public links.'}
+                      : isOwnerShareControls
+                        ? 'Publish to make this page public. Unpublish hides it from public links.'
+                        : 'Only the owner can publish or change access. You can copy the active shared link.'}
                   </div>
                 </div>
 
-                {!canCopyReadOnlyShareUrl && (
+                {isOwnerShareControls && !canCopyReadOnlyShareUrl && (
                   <div className="space-y-1">
                     <label className="block text-[10px] font-mono text-muted-foreground">Permission</label>
                     <select
@@ -906,20 +915,20 @@ export function AppHeader({
                       className="w-32 h-32"
                     />
                   ) : (
-                    <div className="text-[10px] font-mono text-muted-foreground">Publish to generate QR code</div>
+                    <div className="text-[10px] font-mono text-muted-foreground">No active shared link available</div>
                   )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
-                  {!canCopyReadOnlyShareUrl && (
+                  {isOwnerShareControls && !canCopyReadOnlyShareUrl && (
                     <button className="h-8 border border-border text-[11px] font-mono hover:bg-accent" onClick={handlePublishToggle} disabled={sharing}>
                       {isPublished ? 'Unpublish' : 'Publish'}
                     </button>
                   )}
                   <button
-                    className={`h-8 border border-border text-[11px] font-mono hover:bg-accent ${canCopyReadOnlyShareUrl ? 'col-span-2' : ''}`}
+                    className={`h-8 border border-border text-[11px] font-mono hover:bg-accent ${(!isOwnerShareControls || canCopyReadOnlyShareUrl) ? 'col-span-2' : ''}`}
                     onClick={handleCopyShareLink}
-                    disabled={sharing || (!canCopyReadOnlyShareUrl && (!isPublished || !shareUrl)) || (canCopyReadOnlyShareUrl && !effectiveShareUrl)}
+                    disabled={sharing || !effectiveShareUrl}
                   >
                     Copy link
                   </button>

@@ -401,6 +401,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
             <iframe
               src={embedUrl}
               className="w-full h-full border-0 cnvs-media-embed"
+              style={{ touchAction: isMobile ? 'none' : 'auto' }}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
               title="live-media-preview"
@@ -538,7 +539,12 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
             onTouchMoveCapture={handleEmbedTouchMoveCapture}
             onTouchEndCapture={handleEmbedTouchEndCapture}
           >
-            <iframe src={normalizedUrl} className="w-full h-full border-0 cnvs-media-embed" title="live-media-preview" />
+            <iframe
+              src={normalizedUrl}
+              className="w-full h-full border-0 cnvs-media-embed"
+              style={{ touchAction: isMobile ? 'none' : 'auto' }}
+              title="live-media-preview"
+            />
           </div>
         )
       ) : (

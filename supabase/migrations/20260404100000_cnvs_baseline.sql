@@ -177,6 +177,98 @@ on public.shared_canvases
 for each row
 execute function public.sync_shared_canvas_route_fields();
 
+create or replace function public.sync_shared_canvas_memberships()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_canvas_id uuid := coalesce(new.canvas_id, old.canvas_id);
+  v_owner_id uuid;
+  v_effective_access text;
+begin
+  if v_canvas_id is null then
+    return coalesce(new, old);
+  end if;
+
+  select c.user_id
+  into v_owner_id
+  from public.canvases c
+  where c.id = v_canvas_id
+  limit 1;
+
+  if v_owner_id is null then
+    return coalesce(new, old);
+  end if;
+
+  select
+    case
+      when exists (
+        select 1
+        from public.shared_canvases sc
+        where sc.canvas_id = v_canvas_id
+          and sc.access_level = 'editor'
+      ) then 'editor'
+      when exists (
+        select 1
+        from public.shared_canvases sc
+        where sc.canvas_id = v_canvas_id
+          and sc.access_level = 'viewer'
+      ) then 'viewer'
+      else null
+    end
+  into v_effective_access;
+
+  if v_effective_access is null then
+    -- Unpublished: remove all joined access and clear their startup pointer for this canvas.
+    delete from public.canvas_permissions cp
+    where cp.canvas_id = v_canvas_id
+      and cp.user_id <> v_owner_id
+      and cp.role in ('viewer', 'editor');
+
+    delete from public.canvas_editor_sessions ces
+    where ces.canvas_id = v_canvas_id
+      and ces.user_id <> v_owner_id;
+
+    update public.user_canvas_state ucs
+    set
+      last_opened_canvas_id = null,
+      updated_at = now()
+    where ucs.last_opened_canvas_id = v_canvas_id
+      and ucs.user_id <> v_owner_id;
+
+    return coalesce(new, old);
+  end if;
+
+  -- Published with changed access: keep joined users attached, switch role automatically.
+  update public.canvas_permissions cp
+  set
+    role = v_effective_access,
+    updated_at = now()
+  where cp.canvas_id = v_canvas_id
+    and cp.user_id <> v_owner_id
+    and cp.role in ('viewer', 'editor')
+    and cp.role is distinct from v_effective_access;
+
+  if v_effective_access = 'viewer' then
+    -- Downgrade to viewer: clear non-owner editor sessions.
+    delete from public.canvas_editor_sessions ces
+    where ces.canvas_id = v_canvas_id
+      and ces.user_id <> v_owner_id;
+  end if;
+
+  return coalesce(new, old);
+end;
+$$;
+
+drop trigger if exists trg_shared_canvases_sync_memberships on public.shared_canvases;
+create trigger trg_shared_canvases_sync_memberships
+after insert or update or delete
+on public.shared_canvases
+for each row
+execute function public.sync_shared_canvas_memberships();
+
 create or replace function public.propagate_canvas_name_to_shares()
 returns trigger
 language plpgsql

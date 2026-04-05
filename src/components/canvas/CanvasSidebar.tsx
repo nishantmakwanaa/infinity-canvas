@@ -279,7 +279,7 @@ export function CanvasSidebar({
         )}
 
         {groupedOwnedSharedView.length > 0 && (
-          <div className="order-3">
+          <div className="order-2">
             <div className="px-1 pt-1 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Shared by me (view only)</div>
             {groupedOwnedSharedView.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
@@ -339,7 +339,7 @@ export function CanvasSidebar({
         )}
 
         {groupedOwnedSharedEdit.length > 0 && (
-          <div className="order-2">
+          <div className="order-1">
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Shared by me (edit)</div>
             {groupedOwnedSharedEdit.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
@@ -399,7 +399,7 @@ export function CanvasSidebar({
         )}
 
         {groupedJoinedView.length > 0 && (
-          <div className="order-5">
+          <div className="order-4">
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Joined (view only)</div>
             {groupedJoinedView.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
@@ -459,7 +459,7 @@ export function CanvasSidebar({
         )}
 
         {groupedJoinedEdit.length > 0 && (
-          <div className="order-1">
+          <div className="order-3">
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Joined (edit)</div>
             {groupedJoinedEdit.map((group) => {
               const isCurrentGroup = group.pages.some((page) => page.id === currentCanvasId);
@@ -497,7 +497,7 @@ export function CanvasSidebar({
           </div>
         )}
 
-        <div className="order-4">
+        <div className="order-5">
           {groupedOwnedPrivate.length > 0 && (
             <div className="px-1 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Owned (not shared)</div>
           )}
