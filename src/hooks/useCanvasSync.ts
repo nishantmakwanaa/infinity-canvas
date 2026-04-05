@@ -1148,7 +1148,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
-  }, [ensureSingleBootstrapCanvas, loadCanvasById, readServerLastOpenedCanvasId, refreshAllCanvasCollections, warnPermissionIssue]);
+  }, [ensureSingleBootstrapCanvas, insertCanvasWithRetry, loadCanvasById, readServerLastOpenedCanvasId, refreshAllCanvasCollections, warnPermissionIssue]);
 
   const createCanvas = useCallback(async (name?: string) => {
     if (!enabled || !session?.user?.id) return;
@@ -1183,7 +1183,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
     isLoadingRef.current = false;
     setIsCanvasLoading(false);
-  }, [enabled, refreshAllCanvasCollections, session?.user?.id]);
+  }, [enabled, insertCanvasWithRetry, refreshAllCanvasCollections, session?.user?.id]);
 
   const selectCanvas = useCallback(async (canvasId: string): Promise<boolean> => {
     if (!enabled || !canvasId) return false;

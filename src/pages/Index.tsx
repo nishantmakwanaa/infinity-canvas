@@ -8,7 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCanvasSync } from '@/hooks/useCanvasSync';
 import { Profiler, useCallback, useEffect, useMemo, useRef, useState, type ProfilerOnRenderCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useCanvasStore } from '@/store/canvasStore';
+import { useCanvasStore, type CanvasBlock, type DrawingElement } from '@/store/canvasStore';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useSocketCanvasCollaboration } from '@/hooks/useSocketCanvasCollaboration';
@@ -32,10 +32,38 @@ type PendingSidebarAction =
   | { type: 'delete'; ids: string[] };
 
 interface CanvasSnapshot {
-  blocks: any[];
-  drawings: any[];
+  blocks: CanvasBlock[];
+  drawings: DrawingElement[];
   pan: { x: number; y: number };
   zoom: number;
+}
+
+interface RpcErrorShape {
+  status?: number;
+  code?: string;
+  message?: string;
+}
+
+interface RpcResponseShape<T> {
+  data: T[] | T | null;
+  error: RpcErrorShape | null;
+  status?: number;
+}
+
+interface OpenPageApiLinkRow {
+  canvas_id: string;
+  owner_user_id: string | null;
+  owner_username: string | null;
+  canvas_name: string | null;
+  page_name: string | null;
+  is_share: boolean;
+  share_access: string | null;
+  can_edit: boolean;
+  blocks: CanvasBlock[] | null;
+  drawings: DrawingElement[] | null;
+  pan_x: number | null;
+  pan_y: number | null;
+  zoom: number | null;
 }
 
 function slugifyUsername(value: string) {
@@ -53,6 +81,21 @@ function parseOwnerUserIdFromDecodedOwner(decodedOwner: string | null | undefine
 
 function clampDesktopSidebarWidth(value: number) {
   return Math.max(8, Math.min(20, value));
+}
+
+function toSingleRpcRow<T>(data: T[] | T | null | undefined): T | null {
+  if (Array.isArray(data)) return data[0] || null;
+  return data ?? null;
+}
+
+function callOpenPageRpc(
+  fnName: 'open_page_api_link' | 'open_page_api_link_with_join',
+  args: { p_user_token: string; p_canvas_token: string; p_page_token: string }
+) {
+  const client = supabase as unknown as {
+    rpc: (fn: string, params: { p_user_token: string; p_canvas_token: string; p_page_token: string }) => Promise<RpcResponseShape<OpenPageApiLinkRow>>;
+  };
+  return client.rpc(fnName, args);
 }
 
 const Index = () => {
@@ -165,7 +208,7 @@ const Index = () => {
   const readOnlyShareUrl = useMemo(() => {
     if (typeof window === 'undefined') return null;
     if (!(rawUserToken && parsedApiRequest?.kind === 'share')) return null;
-    return `${window.location.origin}${window.location.pathname}${window.location.search}`;
+    return `${window.location.origin}${location.pathname}${location.search}`;
   }, [location.pathname, location.search, parsedApiRequest?.kind, rawUserToken]);
   const collaborationIdentity = useMemo(
     () => (user
@@ -175,7 +218,7 @@ const Index = () => {
         avatarUrl: user.avatarUrl,
       }
       : null),
-    [user?.id, user?.displayName, user?.avatarUrl]
+    [user]
   );
 
   const socketServerUrl = String(import.meta.env.VITE_SOCKET_SERVER_URL || '').trim();
@@ -236,7 +279,15 @@ const Index = () => {
     ? sidebarWidthPercent
     : 0;
   const effectiveCanvasLoading = isRouteLoading || (syncEnabled && isCanvasLoading);
-  const showHeaderAndBars = !effectiveCanvasLoading;
+  const hasLoadedCanvasContext = Boolean(
+    effectiveCurrentCanvasId
+    || activeCanvasIdForCollab
+    || routeCanvasId
+    || canvases.length
+    || sharedCanvases.length
+  );
+  // Keep chrome mounted after first context load so sidebar does not "refresh" on canvas switches.
+  const showHeaderAndBars = hasLoadedCanvasContext || !effectiveCanvasLoading;
   const activeCanvasName = currentCanvasName || routeCanvasName;
   const currentParsedName = parseCanvasRouteName(activeCanvasName);
   const sidebarCanvases = canMutateCanvas ? canvases : [];
@@ -319,9 +370,9 @@ const Index = () => {
     user?.id,
   ]);
 
-  const cloneSnapshot = (snapshot: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(snapshot));
+  const cloneSnapshot = useCallback((snapshot: CanvasSnapshot): CanvasSnapshot => JSON.parse(JSON.stringify(snapshot)), []);
 
-  const getSnapshotFromStore = (): CanvasSnapshot => {
+  const getSnapshotFromStore = useCallback((): CanvasSnapshot => {
     const state = useCanvasStore.getState();
     return {
       blocks: state.blocks,
@@ -329,33 +380,33 @@ const Index = () => {
       pan: state.pan,
       zoom: state.zoom,
     };
-  };
+  }, []);
 
-  const applySnapshot = (snapshot: CanvasSnapshot) => {
+  const applySnapshot = useCallback((snapshot: CanvasSnapshot) => {
     isRestoringHistoryRef.current = true;
     const cloned = cloneSnapshot(snapshot);
-    useCanvasStore.getState().loadCanvas(cloned.blocks as any, cloned.pan, cloned.zoom, cloned.drawings as any);
+    useCanvasStore.getState().loadCanvas(cloned.blocks, cloned.pan, cloned.zoom, cloned.drawings);
     lastSnapshotRef.current = cloned;
     lastSerializedSnapshotRef.current = JSON.stringify(cloned);
     isRestoringHistoryRef.current = false;
-  };
+  }, [cloneSnapshot]);
 
-  const pushHistory = (snapshot: CanvasSnapshot) => {
+  const pushHistory = useCallback((snapshot: CanvasSnapshot) => {
     historyPastRef.current.push(cloneSnapshot(snapshot));
     if (historyPastRef.current.length > 100) {
       historyPastRef.current.shift();
     }
-  };
+  }, [cloneSnapshot]);
 
-  const getSelectedBlocks = () => {
+  const getSelectedBlocks = useCallback(() => {
     const store = useCanvasStore.getState();
     const selected = store.blocks.filter((block) => store.selectedBlockIds.includes(block.id));
     if (selected.length) return selected;
     const single = store.blocks.find((block) => block.id === store.selectedBlockId);
     return single ? [single] : [];
-  };
+  }, []);
 
-  const copySelectedBlocks = () => {
+  const copySelectedBlocks = useCallback(() => {
     const selected = getSelectedBlocks();
     if (!selected.length) {
       toast.info('Select a canvas component to copy');
@@ -366,36 +417,40 @@ const Index = () => {
     void navigator.clipboard.writeText(payload).catch(() => undefined);
     toast.success('Canvas component copied');
     return true;
-  };
+  }, [getSelectedBlocks]);
 
-  const deleteSelectedBlocks = () => {
+  const deleteSelectedBlocks = useCallback(() => {
     const store = useCanvasStore.getState();
     const selected = getSelectedBlocks();
     if (!selected.length) return false;
     selected.forEach((block) => store.deleteBlock(block.id));
     toast.success('Selected component removed');
     return true;
-  };
+  }, [getSelectedBlocks]);
 
-  const cutSelectedBlocks = () => {
+  const cutSelectedBlocks = useCallback(() => {
     if (!copySelectedBlocks()) return false;
     return deleteSelectedBlocks();
-  };
+  }, [copySelectedBlocks, deleteSelectedBlocks]);
 
-  const toggleTextFormat = (field: 'textBold' | 'textItalic' | 'textUnderline' | 'textHighlight') => {
+  const toggleTextFormat = useCallback((field: 'textBold' | 'textItalic' | 'textUnderline' | 'textHighlight') => {
     const store = useCanvasStore.getState();
     const selected = getSelectedBlocks().filter((block) => block.type === 'note' || block.type === 'link' || block.type === 'todo');
     if (selected.length) {
-      const next = !Boolean((selected[0] as any)[field]);
-      selected.forEach((block) => store.updateBlock(block.id, { [field]: next } as any));
+      const next = !selected[0][field];
+      selected.forEach((block) => {
+        const updates: Pick<CanvasBlock, typeof field> = { [field]: next } as Pick<CanvasBlock, typeof field>;
+        store.updateBlock(block.id, updates);
+      });
       return;
     }
     if (store.activeTool === 'text') {
-      store.setToolSettings({ [field]: !store.toolSettings[field] } as any);
+      const updates = { [field]: !store.toolSettings[field] } as Pick<typeof store.toolSettings, typeof field>;
+      store.setToolSettings(updates);
     }
-  };
+  }, [getSelectedBlocks]);
 
-  const handleUndo = () => {
+  const handleUndo = useCallback(() => {
     const prev = historyPastRef.current.pop();
     if (!prev) return false;
     if (lastSnapshotRef.current) {
@@ -403,9 +458,9 @@ const Index = () => {
     }
     applySnapshot(prev);
     return true;
-  };
+  }, [applySnapshot, cloneSnapshot]);
 
-  const handleRedo = () => {
+  const handleRedo = useCallback(() => {
     const next = historyFutureRef.current.pop();
     if (!next) return false;
     if (lastSnapshotRef.current) {
@@ -413,7 +468,7 @@ const Index = () => {
     }
     applySnapshot(next);
     return true;
-  };
+  }, [applySnapshot, pushHistory]);
 
   const handleCreatePage = () => {
     if (!session?.user?.id || !isEditorMode) return;
@@ -480,7 +535,7 @@ const Index = () => {
       void (async () => {
         const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
         if (session?.user?.id && uniqueIds.length) {
-          const leaveRpc: any = await supabase.rpc('leave_joined_canvases', {
+          const leaveRpc = await supabase.rpc('leave_joined_canvases', {
             p_canvas_ids: uniqueIds,
           });
 
@@ -590,15 +645,15 @@ const Index = () => {
 
     const resolveRoute = async () => {
       try {
-        let rpc = await (supabase as any).rpc('open_page_api_link_with_join', {
+        let rpc = await callOpenPageRpc('open_page_api_link_with_join', {
           p_user_token: parsedApiRequest.userToken,
           p_canvas_token: parsedApiRequest.canvasToken,
           p_page_token: parsedApiRequest.pageToken,
         });
 
-        const rpcStatus = Number((rpc as any)?.status || (rpc?.error as any)?.status || 0);
-        const rpcCode = String((rpc?.error as any)?.code || '').trim();
-        const rpcMessage = String((rpc?.error as any)?.message || '').toLowerCase();
+        const rpcStatus = Number(rpc?.status || rpc?.error?.status || 0);
+        const rpcCode = String(rpc?.error?.code || '').trim();
+        const rpcMessage = String(rpc?.error?.message || '').toLowerCase();
         const missingJoinRpc = Boolean(rpc?.error)
           && (
             rpcStatus === 400
@@ -610,7 +665,7 @@ const Index = () => {
           );
 
         if (missingJoinRpc) {
-          rpc = await supabase.rpc('open_page_api_link', {
+          rpc = await callOpenPageRpc('open_page_api_link', {
             p_user_token: parsedApiRequest.userToken,
             p_canvas_token: parsedApiRequest.canvasToken,
             p_page_token: parsedApiRequest.pageToken,
@@ -621,7 +676,7 @@ const Index = () => {
 
         if (cancelled) return;
 
-        const row = Array.isArray(data) ? data[0] : data;
+        const row = toSingleRpcRow(data);
         if (error || !row?.canvas_id) {
           setCollaboratorOwnerUserId(null);
           if (session?.user?.id) {
@@ -639,12 +694,12 @@ const Index = () => {
           return;
         }
 
-        const shareAccess = String((row as any)?.share_access || '').toLowerCase();
-        const isShareRoute = Boolean((row as any)?.is_share);
+        const shareAccess = String(row.share_access || '').toLowerCase();
+        const isShareRoute = Boolean(row.is_share);
         const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
         const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
         const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
-        const rowOwnerUserId = String((row as { owner_user_id?: string | null })?.owner_user_id || '').trim();
+        const rowOwnerUserId = String(row.owner_user_id || '').trim();
         setCollaboratorOwnerUserId(rowOwnerUserId || ownerUserIdFromToken || null);
 
         // If owner opens a public share link while authenticated, route to owner path immediately.
@@ -653,7 +708,7 @@ const Index = () => {
           && session?.user?.id
           && rowOwnerUserId === session.user.id
         ) {
-          const ownerUsername = String(user?.username || (row as any)?.owner_username || '').trim();
+          const ownerUsername = String(user?.username || row.owner_username || '').trim();
           if (ownerUsername) {
             const ownerPath = toOwnerPagePath(slugifyUsername(ownerUsername), resolvedName, session.user.id);
             navigate(ownerPath, { replace: true });
@@ -678,10 +733,10 @@ const Index = () => {
 
         // Always seed canvas content from route payload so opening never renders blank.
         useCanvasStore.getState().loadCanvas(
-          (row.blocks as any[]) || [],
+          row.blocks || [],
           { x: Number(row.pan_x) || 0, y: Number(row.pan_y) || 0 },
           typeof row.zoom === 'number' ? row.zoom : 1,
-          (row.drawings as any[]) || []
+          row.drawings || []
         );
 
         const canEdit = isShareRoute
@@ -725,14 +780,14 @@ const Index = () => {
       if (stopped) return;
       if (document.visibilityState !== 'visible') return;
 
-      const rpc = await supabase.rpc('open_page_api_link', {
+      const rpc = await callOpenPageRpc('open_page_api_link', {
         p_user_token: parsedApiRequest.userToken,
         p_canvas_token: parsedApiRequest.canvasToken,
         p_page_token: parsedApiRequest.pageToken,
       });
 
       if (stopped) return;
-      const row = Array.isArray(rpc?.data) ? rpc.data[0] : rpc?.data;
+      const row = toSingleRpcRow(rpc?.data);
       if (rpc?.error || !row?.canvas_id) {
         setCollaboratorOwnerUserId(null);
         useCanvasStore.getState().loadCanvas([], { x: 0, y: 0 }, 1, []);
@@ -864,12 +919,17 @@ const Index = () => {
   useEffect(() => {
     if (isMobile) {
       desktopSidebarWidthRef.current = clampDesktopSidebarWidth(sidebarWidthPercent);
-      setSidebarWidthPercent(70);
+      if (sidebarWidthPercent !== 70) {
+        setSidebarWidthPercent(70);
+      }
       return;
     }
 
-    setSidebarWidthPercent(clampDesktopSidebarWidth(desktopSidebarWidthRef.current || 18));
-  }, [isMobile]);
+    const next = clampDesktopSidebarWidth(desktopSidebarWidthRef.current || 18);
+    if (sidebarWidthPercent !== next) {
+      setSidebarWidthPercent(next);
+    }
+  }, [isMobile, sidebarWidthPercent]);
 
   useEffect(() => {
     if (isMobile) return;
@@ -917,7 +977,7 @@ const Index = () => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [cloneSnapshot, getSnapshotFromStore, pushHistory]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -931,7 +991,7 @@ const Index = () => {
 
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
-      const isTyping = tag === 'input' || tag === 'textarea' || (target as any)?.isContentEditable;
+      const isTyping = tag === 'input' || tag === 'textarea' || Boolean(target?.isContentEditable);
       const store = useCanvasStore.getState();
       const hasOnlySingleChar = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
       if (isTyping) return;
@@ -1028,7 +1088,16 @@ const Index = () => {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [canMutateCanvas, effectiveCanvasLoading]);
+  }, [
+    canMutateCanvas,
+    copySelectedBlocks,
+    cutSelectedBlocks,
+    deleteSelectedBlocks,
+    effectiveCanvasLoading,
+    handleRedo,
+    handleUndo,
+    toggleTextFormat,
+  ]);
 
   useEffect(() => {
     return startDroppedFrameMonitor();
