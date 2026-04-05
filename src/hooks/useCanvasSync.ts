@@ -559,7 +559,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
     const { data, error, status } = await supabase
       .from('shared_canvases')
-      .select('canvas_id,access_level')
+      .select('canvas_id,access_level,created_at')
       .in('canvas_id', canvasIds);
 
     if (error) {
@@ -569,16 +569,21 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return {} as Record<string, 'viewer' | 'editor'>;
     }
 
-    const next: Record<string, 'viewer' | 'editor'> = {};
+    const latestByCanvas = new Map<string, { access: 'viewer' | 'editor'; createdAtMs: number }>();
     (data || []).forEach((row: any) => {
       const id = String(row?.canvas_id || '').trim();
-      const level = String(row?.access_level || '').toLowerCase();
       if (!id) return;
-      if (level === 'editor') {
-        next[id] = 'editor';
-      } else if (level === 'viewer' && next[id] !== 'editor') {
-        next[id] = 'viewer';
+      const level: 'viewer' | 'editor' = String(row?.access_level || '').toLowerCase() === 'editor' ? 'editor' : 'viewer';
+      const createdAtMs = Date.parse(String(row?.created_at || '')) || 0;
+      const prev = latestByCanvas.get(id);
+      if (!prev || createdAtMs >= prev.createdAtMs) {
+        latestByCanvas.set(id, { access: level, createdAtMs });
       }
+    });
+
+    const next: Record<string, 'viewer' | 'editor'> = {};
+    latestByCanvas.forEach((value, id) => {
+      next[id] = value.access;
     });
 
     Object.entries(next).forEach(([canvasId, accessLevel]) => {
@@ -1276,7 +1281,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     isLoadingRef.current = true;
 
     const ownedIdSet = new Set(canvases.map((canvas) => canvas.id));
-    const joinedIds = ids.filter((id) => !ownedIdSet.has(id) && Boolean(joinedCanvasAccessByCanvasId[id]));
+    const joinedIds = ids.filter((id) => !ownedIdSet.has(id));
     const ownedIds = ids.filter((id) => ownedIdSet.has(id));
 
     let hadDeleteError = false;
@@ -1388,7 +1393,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         toast.error('Some selected canvases could not be removed.');
       }
     }
-  }, [canvases, createCanvas, enabled, joinedCanvasAccessByCanvasId, loadCanvasById, refreshAllCanvasCollections, removeJoinedCanvasAccess, session?.user?.id, warnPermissionIssue, warnSchemaNotDeployed]);
+  }, [canvases, createCanvas, enabled, loadCanvasById, refreshAllCanvasCollections, removeJoinedCanvasAccess, session?.user?.id, warnPermissionIssue, warnSchemaNotDeployed]);
 
   const flushPendingCanvasSync = useCallback(async () => {
     if (!session?.user?.id) return;
@@ -1800,7 +1805,26 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       refreshCollections(true);
     };
 
-    const onShareAccessUpdated = () => {
+    const onShareAccessUpdated = (event: Event) => {
+      const custom = event as CustomEvent<{ canvasId?: string; accessLevel?: CanvasAccessLevel; published?: boolean }>;
+      const canvasId = String(custom?.detail?.canvasId || '').trim();
+      const accessLevel = custom?.detail?.accessLevel;
+      const published = custom?.detail?.published;
+
+      if (canvasId) {
+        setShareAccessByCanvasId((prev) => {
+          const next = { ...prev };
+          if (published === false) {
+            delete next[canvasId];
+            return next;
+          }
+          if (accessLevel === 'editor' || accessLevel === 'viewer') {
+            next[canvasId] = accessLevel;
+            return next;
+          }
+          return prev;
+        });
+      }
       refreshCollections(true);
     };
 

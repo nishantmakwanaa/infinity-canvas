@@ -886,12 +886,12 @@ begin
     where c.id = p_canvas_id
       and (
         c.user_id = v_user_id
-        or cp.role in ('owner', 'editor')
+        or cp.role in ('owner', 'editor', 'viewer')
         or exists (
           select 1
           from public.shared_canvases sc
           where sc.canvas_id = c.id
-            and sc.access_level = 'editor'
+            and sc.access_level in ('viewer', 'editor')
         )
       )
   ) into v_has_access;
@@ -1203,6 +1203,171 @@ $$;
 
 revoke all on function public.open_page_api_link(text, text, text) from public;
 grant execute on function public.open_page_api_link(text, text, text) to anon, authenticated;
+
+drop function if exists public.open_page_api_link_with_join(text, text, text);
+
+create or replace function public.open_page_api_link_with_join(
+  p_user_token text,
+  p_canvas_token text,
+  p_page_token text
+)
+returns table (
+  canvas_id       uuid,
+  owner_user_id   uuid,
+  owner_username  text,
+  canvas_name     text,
+  page_name       text,
+  is_share        boolean,
+  share_access    text,
+  can_edit        boolean,
+  blocks          jsonb,
+  drawings        jsonb,
+  pan_x           double precision,
+  pan_y           double precision,
+  zoom            double precision
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_prefix text := left(btrim(coalesce(p_user_token, '')), 2);
+  v_role text;
+begin
+  select
+    r.canvas_id,
+    r.owner_user_id,
+    r.owner_username,
+    r.canvas_name,
+    r.page_name,
+    r.is_share,
+    r.share_access,
+    r.can_edit,
+    r.blocks,
+    r.drawings,
+    r.pan_x,
+    r.pan_y,
+    r.zoom
+  into
+    canvas_id,
+    owner_user_id,
+    owner_username,
+    canvas_name,
+    page_name,
+    is_share,
+    share_access,
+    can_edit,
+    blocks,
+    drawings,
+    pan_x,
+    pan_y,
+    zoom
+  from public.open_page_api_link(p_user_token, p_canvas_token, p_page_token) r
+  limit 1;
+
+  if canvas_id is null then
+    return;
+  end if;
+
+  if is_share and v_uid is not null and (owner_user_id is null or owner_user_id <> v_uid) then
+    v_role := 'viewer';
+    if lower(coalesce(share_access, '')) = 'editor' and v_prefix = 'se' then
+      v_role := 'editor';
+    end if;
+
+    insert into public.canvas_permissions (canvas_id, user_id, role, granted_by)
+    values (canvas_id, v_uid, v_role, owner_user_id)
+    on conflict (canvas_id, user_id)
+    do update
+      set role = case
+        when public.canvas_permissions.role = 'owner' then 'owner'
+        when excluded.role = 'editor' then 'editor'
+        when public.canvas_permissions.role = 'editor' then 'editor'
+        else excluded.role
+      end,
+      granted_by = excluded.granted_by,
+      updated_at = now();
+  end if;
+
+  return next;
+end;
+$$;
+
+revoke all on function public.open_page_api_link_with_join(text, text, text) from public;
+grant execute on function public.open_page_api_link_with_join(text, text, text) to anon, authenticated;
+
+drop function if exists public.get_page_preview_metadata(text, text, text);
+
+create or replace function public.get_page_preview_metadata(
+  p_user_token text,
+  p_canvas_token text,
+  p_page_token text
+)
+returns table (
+  title text,
+  description text,
+  access_type text,
+  canvas_label text,
+  page_label text,
+  is_share_link boolean
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_prefix text := left(btrim(coalesce(p_user_token, '')), 2);
+  v_canvas text;
+  v_page text;
+  v_is_share boolean;
+  v_can_edit boolean;
+  v_share_access text;
+  v_access text;
+  v_app_desc text := 'CNVS is an infinite canvas workspace for notes, drawings, media, and real-time collaboration. Organize visual thinking with multi-page canvases and share with viewer or editor access.';
+begin
+  select
+    r.canvas_name,
+    r.page_name,
+    r.is_share,
+    r.can_edit,
+    r.share_access
+  into
+    v_canvas,
+    v_page,
+    v_is_share,
+    v_can_edit,
+    v_share_access
+  from public.open_page_api_link(p_user_token, p_canvas_token, p_page_token) r
+  limit 1;
+
+  if btrim(coalesce(v_canvas, '')) = '' then
+    return;
+  end if;
+
+  v_access := 'Editable';
+  if v_is_share then
+    if v_prefix = 'se' and v_can_edit and lower(coalesce(v_share_access, '')) = 'editor' then
+      v_access := 'Editable';
+    else
+      v_access := 'View only';
+    end if;
+  end if;
+
+  title := 'CNVS | ' || v_canvas || ' - ' || coalesce(v_page, 'page-1.cnvs') || ' | ' || v_access;
+  description := v_app_desc || ' Canvas: ' || v_canvas || '. Page: ' || coalesce(v_page, 'page-1.cnvs') || '. Access: ' || v_access || '.';
+  access_type := lower(replace(v_access, ' ', '-'));
+  canvas_label := v_canvas;
+  page_label := coalesce(v_page, 'page-1.cnvs');
+  is_share_link := coalesce(v_is_share, false);
+
+  return next;
+end;
+$$;
+
+revoke all on function public.get_page_preview_metadata(text, text, text) from public;
+grant execute on function public.get_page_preview_metadata(text, text, text) to anon, authenticated;
 
 create or replace function public.resolve_user_canvas(
   p_owner_username text,

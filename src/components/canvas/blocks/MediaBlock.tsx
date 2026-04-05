@@ -181,6 +181,7 @@ function getMediaAutoSize(url: string, blobKind: 'unknown' | 'video' | 'image' |
 export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?: boolean }) {
   const updateBlock = useCanvasStore((s) => s.updateBlock);
   const isMobile = useIsMobile();
+  const blockRootRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -245,15 +246,15 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   const isImageUrl = hasUrl && isImage(normalizedUrl, blobMediaKind);
   const embedZoomResetTimerRef = useRef<number | null>(null);
 
-  const enableEmbedZoomThrough = () => {
-    if (typeof document === 'undefined') return;
-    document.documentElement.classList.add('cnvs-zoom-through-embeds');
+  const setEmbedZoomThrough = (active: boolean) => {
+    const canvasEl = blockRootRef.current?.closest('[data-canvas="true"]') as HTMLElement | null;
+    if (!canvasEl) return;
+    canvasEl.classList.toggle('cnvs-zoom-through-embeds', active);
   };
 
-  const disableEmbedZoomThrough = () => {
-    if (typeof document === 'undefined') return;
-    document.documentElement.classList.remove('cnvs-zoom-through-embeds');
-  };
+  const enableEmbedZoomThrough = () => setEmbedZoomThrough(true);
+
+  const disableEmbedZoomThrough = () => setEmbedZoomThrough(false);
 
   const scheduleEmbedZoomThroughOff = (delay = 140) => {
     if (embedZoomResetTimerRef.current !== null) {
@@ -287,6 +288,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
 
   const handleEmbedTouchStartCapture = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length >= 2) {
+      e.preventDefault();
       enableEmbedZoomThrough();
       scheduleEmbedZoomThroughOff(260);
     }
@@ -294,6 +296,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
 
   const handleEmbedTouchMoveCapture = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length >= 2) {
+      e.preventDefault();
       enableEmbedZoomThrough();
       scheduleEmbedZoomThroughOff(260);
     }
@@ -361,7 +364,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   };
 
   return (
-    <div className="p-2 h-full flex flex-col gap-1.5 min-h-0">
+    <div ref={blockRootRef} className="p-2 h-full flex flex-col gap-1.5 min-h-0">
       {!readOnly && (
         <div className="flex items-center gap-1">
           <input

@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import SharePreviewRedirect from "./pages/SharePreviewRedirect";
 import { useRealtimeTranslation } from "@/hooks/useRealtimeTranslation";
 import { setThemePreference, useThemeTime } from "@/hooks/useThemeTime";
 import { useCanvasStore } from "@/store/canvasStore";
@@ -58,8 +59,28 @@ const App = () => {
 
   useEffect(() => {
     const embedZoomClass = 'cnvs-zoom-through-embeds';
-    const setEmbedZoomThrough = (active: boolean) => {
-      document.documentElement.classList.toggle(embedZoomClass, active);
+    const setEmbedZoomThrough = (active: boolean, target?: EventTarget | null) => {
+      const canvases = new Set<HTMLElement>();
+
+      if (target instanceof Element) {
+        const nearestCanvas = target.closest('[data-canvas="true"]') as HTMLElement | null;
+        if (nearestCanvas) {
+          canvases.add(nearestCanvas);
+        }
+      }
+
+      if (!canvases.size) {
+        document.querySelectorAll<HTMLElement>('[data-canvas="true"]').forEach((canvas) => {
+          canvases.add(canvas);
+        });
+      }
+
+      canvases.forEach((canvas) => {
+        canvas.classList.toggle(embedZoomClass, active);
+      });
+
+      // Ensure no stale legacy global class remains on the document root.
+      document.documentElement.classList.remove(embedZoomClass);
     };
     const isCanvasTarget = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return false;
@@ -82,7 +103,7 @@ const App = () => {
         e.preventDefault();
 
         if (isCanvasTarget(e.target)) {
-          setEmbedZoomThrough(true);
+          setEmbedZoomThrough(true, e.target);
           scheduleEmbedZoomReset();
           return;
         }
@@ -113,7 +134,7 @@ const App = () => {
     };
 
     const onGestureStart = (e: Event) => {
-      setEmbedZoomThrough(true);
+      setEmbedZoomThrough(true, e.target);
       e.preventDefault();
     };
 
@@ -178,6 +199,7 @@ const App = () => {
         >
           <Routes>
             <Route path="/" element={<Index />} />
+            <Route path="/api/share-preview" element={<SharePreviewRedirect />} />
             <Route path="/:pageToken" element={<Index />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

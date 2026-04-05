@@ -6,7 +6,7 @@ import { AppMenu } from './AppMenu';
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { parseCanvasRouteName } from '@/lib/canvasNaming';
-import { toEditSharePagePath, toOwnerPagePath, toPageApiUrl, toSharePagePath } from '@/lib/pageApi';
+import { toOwnerPagePath, toPageApiUrl, toSharePreviewPath } from '@/lib/pageApi';
 
 interface AuthUser {
   id: string;
@@ -129,17 +129,23 @@ export function AppHeader({
   const headerPageDisplayName = isMobile ? getMobilePageDisplayName(headerPageName) : headerPageName;
   const isGuestUser = !user;
   const shouldShowCollaborators = Boolean(
-    user && onToggleCollaboratorVisibility && !readOnlyMode && forceShowCollaboratorsButton
+    user && onToggleCollaboratorVisibility && forceShowCollaboratorsButton
   );
   const canCopyReadOnlyShareUrl = Boolean(readOnlyMode && !canShareCurrentCanvas && readOnlyShareUrl);
   const effectiveShareUrl = canCopyReadOnlyShareUrl ? (readOnlyShareUrl || '') : shareUrl;
 
-  const emitShareAccessUpdated = useCallback((canvasId?: string | null) => {
+  const emitShareAccessUpdated = useCallback((payload?: {
+    canvasId?: string | null;
+    accessLevel?: 'viewer' | 'editor';
+    published?: boolean;
+  }) => {
     if (typeof window === 'undefined') return;
     window.dispatchEvent(
       new CustomEvent('cnvs-share-access-updated', {
         detail: {
-          canvasId: canvasId || currentCanvasId || null,
+          canvasId: payload?.canvasId || currentCanvasId || null,
+          accessLevel: payload?.accessLevel,
+          published: payload?.published,
         },
       })
     );
@@ -151,9 +157,7 @@ export function AppHeader({
     access: 'viewer' | 'editor',
     ownerUserId?: string
   ) => {
-    const path = access === 'editor'
-      ? toEditSharePagePath(routeOwner, token, ownerUserId)
-      : toSharePagePath(routeOwner, token, ownerUserId);
+    const path = toSharePreviewPath(routeOwner, token, access, ownerUserId);
     return toPageApiUrl(path);
   };
 
@@ -295,13 +299,26 @@ export function AppHeader({
 
       const acc = String(upsertedShare?.access_level || '').toLowerCase();
       const resolvedAccess: 'viewer' | 'editor' = acc === 'editor' ? 'editor' : acc === 'viewer' ? 'viewer' : accessLevel;
+
+      // Keep a single active share mode so UI sections and copied link switch immediately.
+      const oppositeAccess: 'viewer' | 'editor' = resolvedAccess === 'editor' ? 'viewer' : 'editor';
+      await supabase
+        .from('shared_canvases')
+        .delete()
+        .eq('canvas_id', context.canvasId)
+        .eq('access_level', oppositeAccess);
+
       const nextShareUrl = buildShareUrl(context.routeOwner, shareToken, resolvedAccess, user.id);
 
       setShareAccessLevel(resolvedAccess);
       setShareUrl(nextShareUrl);
       setIsPublished(true);
       setPublishedCanvasId(context.canvasId);
-      emitShareAccessUpdated(context.canvasId);
+      emitShareAccessUpdated({
+        canvasId: context.canvasId,
+        accessLevel: resolvedAccess,
+        published: true,
+      });
       return nextShareUrl;
     } catch {
       toast.error('Failed to publish');
@@ -335,7 +352,7 @@ export function AppHeader({
       setIsPublished(false);
       setShareUrl('');
       setPublishedCanvasId(null);
-      emitShareAccessUpdated(context.canvasId);
+      emitShareAccessUpdated({ canvasId: context.canvasId, published: false });
       toast.success('Unpublished');
       return true;
     } finally {
@@ -375,9 +392,8 @@ export function AppHeader({
       return;
     }
 
-    const editorRow = rows.find((row: any) => String(row?.access_level || '').toLowerCase() === 'editor');
-    const viewerRow = rows.find((row: any) => String(row?.access_level || '').toLowerCase() === 'viewer');
-    const activeRow = editorRow || viewerRow || rows[0];
+    // Use the most recently created share row as the active mode.
+    const activeRow = rows[0];
     const shareToken = String((activeRow as any)?.share_token || '').trim();
     if (!shareToken) {
       setIsPublished(false);
@@ -786,7 +802,7 @@ export function AppHeader({
             {showCollaboratorMenu && (
               <div ref={collabMenuContentRef} className="fixed right-4 top-14 z-50 w-72 border border-border bg-card p-2 shadow-lg space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-mono text-foreground">Active editors</span>
+                  <span className="text-[11px] font-mono text-foreground">Active collaborators</span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
                     {collaborationConnected ? <Wifi size={10} /> : <WifiOff size={10} />}
                     <span>{Math.max(collaborationActiveCount, collaborators.length)}/{collaborationLimitCount}</span>
@@ -794,7 +810,7 @@ export function AppHeader({
                 </div>
                 {collaborators.length === 0 ? (
                   <div className="text-[10px] font-mono text-muted-foreground border border-border p-2">
-                    No active editors right now.
+                    No active collaborators right now.
                   </div>
                 ) : (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto no-scrollbar">

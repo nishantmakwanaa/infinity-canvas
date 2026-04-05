@@ -102,6 +102,26 @@ export function toEditSharePagePath(ownerUsername: string, shareToken: string, o
   return `/${userToken}?${canvasToken}=${pageSegment}`;
 }
 
+export function toSharePreviewPath(
+  ownerUsername: string,
+  shareToken: string,
+  access: 'viewer' | 'editor',
+  ownerUserId?: string | null,
+) {
+  const compactShareToken = shareToken.trim().toLowerCase();
+  const splitAt = Math.max(1, Math.floor(compactShareToken.length / 2));
+  const left = compactShareToken.slice(0, splitAt);
+  const right = compactShareToken.slice(splitAt);
+  const userToken = `${access === 'editor' ? SHARE_EDIT_TOKEN_PREFIX : SHARE_TOKEN_PREFIX}${encodeSegment(buildOwnerIdentity(ownerUsername, ownerUserId))}`;
+
+  const params = new URLSearchParams();
+  params.set('u', userToken);
+  params.set('c', left);
+  params.set('p', right);
+  params.set('m', access);
+  return `/api/share-preview?${params.toString()}`;
+}
+
 export function getPageApiOrigin() {
   const configured = import.meta.env.VITE_PAGE_API_ORIGIN?.trim();
   return configured && configured.length ? configured : window.location.origin;

@@ -21,6 +21,7 @@ import { useLocation } from 'react-router-dom';
 
 const CANVAS_BLOCK_CLIPBOARD_KEY = 'cnvs_block_clipboard_v1';
 const DEFAULT_SITE_TITLE = 'CNVS | Infinite Canvas Workspace for Teams';
+const APP_META_DESCRIPTION = 'CNVS is an infinite canvas workspace for notes, drawings, media, and real-time collaboration. Organize visual thinking with multi-page canvases and share with viewer or editor access.';
 
 type RouteMode = 'home' | 'loading' | 'editable' | 'readonly' | 'not-found' | 'auth-required';
 
@@ -126,20 +127,23 @@ const Index = () => {
     user?.id &&
     activeCanvasIdForCollab &&
     (
+      currentOwnedShareAccess === 'viewer' ||
       currentOwnedShareAccess === 'editor' ||
+      currentJoinedShareAccess === 'viewer' ||
       currentJoinedShareAccess === 'editor' ||
-      (rawUserToken && parsedApiRequest?.kind === 'share-edit')
+      (rawUserToken && (parsedApiRequest?.kind === 'share' || parsedApiRequest?.kind === 'share-edit'))
     )
   );
   const requireEditorSlotForCurrentCanvas = Boolean(
     user?.id &&
-    isEditorMode &&
     activeCanvasIdForCollab &&
     (
       isCurrentCanvasOwned ||
+      currentOwnedShareAccess === 'viewer' ||
       currentOwnedShareAccess === 'editor' ||
+      currentJoinedShareAccess === 'viewer' ||
       currentJoinedShareAccess === 'editor' ||
-      (rawUserToken && parsedApiRequest?.kind === 'share-edit')
+      (rawUserToken && (parsedApiRequest?.kind === 'share' || parsedApiRequest?.kind === 'share-edit'))
     )
   );
   const collaborationActivationReady = Boolean(activeCanvasIdForCollab) && !isRouteLoading && !isCanvasLoading;
@@ -207,11 +211,15 @@ const Index = () => {
   const canMutateCanvas = isEditorMode && !collabEditLocked;
 
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
-  const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile && isEditorMode ? sidebarWidthPercent : 0;
+  const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile && (isEditorMode || effectiveReadOnlyMode)
+    ? sidebarWidthPercent
+    : 0;
   const effectiveCanvasLoading = isRouteLoading || (syncEnabled && isCanvasLoading);
   const showHeaderAndBars = !effectiveCanvasLoading;
   const activeCanvasName = currentCanvasName || routeCanvasName;
   const currentParsedName = parseCanvasRouteName(activeCanvasName);
+  const sidebarCanvases = canMutateCanvas ? canvases : [];
+  const sidebarShareAccessByCanvasId = canMutateCanvas ? shareAccessByCanvasId : {};
   const pageItems = useMemo(
     () => {
       if (isReadOnlyMode && routeCanvasId) {
@@ -479,11 +487,34 @@ const Index = () => {
 
     const resolveRoute = async () => {
       try {
-        const { data, error } = await supabase.rpc('open_page_api_link', {
+        let rpc = await (supabase as any).rpc('open_page_api_link_with_join', {
           p_user_token: parsedApiRequest.userToken,
           p_canvas_token: parsedApiRequest.canvasToken,
           p_page_token: parsedApiRequest.pageToken,
         });
+
+        const rpcStatus = Number((rpc as any)?.status || (rpc?.error as any)?.status || 0);
+        const rpcCode = String((rpc?.error as any)?.code || '').trim();
+        const rpcMessage = String((rpc?.error as any)?.message || '').toLowerCase();
+        const missingJoinRpc = Boolean(rpc?.error)
+          && (
+            rpcStatus === 400
+            || rpcStatus === 404
+            || rpcCode === '42883'
+            || rpcCode === 'PGRST202'
+            || rpcCode === 'PGRST203'
+            || rpcMessage.includes('function')
+          );
+
+        if (missingJoinRpc) {
+          rpc = await supabase.rpc('open_page_api_link', {
+            p_user_token: parsedApiRequest.userToken,
+            p_canvas_token: parsedApiRequest.canvasToken,
+            p_page_token: parsedApiRequest.pageToken,
+          });
+        }
+
+        const { data, error } = rpc;
 
         if (cancelled) return;
 
@@ -509,6 +540,21 @@ const Index = () => {
         const isShareEditLink = parsedApiRequest?.kind === 'share-edit';
         const requiresAuthGate = Boolean(isShareEditLink && !session?.user?.id);
         const resolvedName = `${String(row.canvas_name || 'untitled')}/${String(row.page_name || 'page-1.cnvs')}`;
+
+        // If owner opens a public share link while authenticated, route to owner path immediately.
+        if (
+          isShareRoute
+          && session?.user?.id
+          && String((row as any)?.owner_user_id || '').trim() === session.user.id
+        ) {
+          const ownerUsername = String(user?.username || (row as any)?.owner_username || '').trim();
+          if (ownerUsername) {
+            const ownerPath = toOwnerPagePath(slugifyUsername(ownerUsername), resolvedName, session.user.id);
+            navigate(ownerPath, { replace: true });
+            return;
+          }
+        }
+
         if (isShareRoute && session?.user?.id && row?.canvas_id) {
           const requestedAccess = (shareAccess === 'editor' || isShareEditLink) ? 'editor' : 'viewer';
           markJoinedCanvasAccess(row.canvas_id, requestedAccess, { canvasName: resolvedName });
@@ -554,7 +600,7 @@ const Index = () => {
     return () => {
       cancelled = true;
     };
-  }, [markJoinedCanvasAccess, navigate, parsedApiRequest, rawUserToken, session?.user?.id]);
+  }, [markJoinedCanvasAccess, navigate, parsedApiRequest, rawUserToken, session?.user?.id, user]);
 
   useEffect(() => {
     if (routeMode !== 'editable' || !routeCanvasId || !syncEnabled) return;
@@ -604,12 +650,47 @@ const Index = () => {
   }, [isMobile]);
 
   useEffect(() => {
-    if (!isLoggedIn || !activeCanvasName || !isEditorMode || !user) {
+    const setMeta = (selector: string, content: string, attr: 'name' | 'property') => {
+      const clean = String(content || '').trim();
+      if (!clean) return;
+      let el = document.head.querySelector<HTMLMetaElement>(`meta[${attr}="${selector}"]`);
+      if (!el) {
+        el = document.createElement('meta');
+        el.setAttribute(attr, selector);
+        document.head.appendChild(el);
+      }
+      el.setAttribute('content', clean);
+    };
+
+    if (!activeCanvasName || effectiveCanvasLoading) {
       document.title = DEFAULT_SITE_TITLE;
+      setMeta('description', APP_META_DESCRIPTION, 'name');
+      setMeta('og:title', DEFAULT_SITE_TITLE, 'property');
+      setMeta('og:description', APP_META_DESCRIPTION, 'property');
+      setMeta('twitter:title', DEFAULT_SITE_TITLE, 'name');
+      setMeta('twitter:description', APP_META_DESCRIPTION, 'name');
       return;
     }
-    document.title = `CNVS | ${currentParsedName.canvasLabel} - ${currentParsedName.pageLabel}`;
-  }, [activeCanvasName, currentParsedName.canvasLabel, currentParsedName.pageLabel, isEditorMode, isLoggedIn, user]);
+
+    const accessTypeLabel = effectiveReadOnlyMode ? 'View only' : 'Editable';
+    const pageTitle = `CNVS | ${currentParsedName.canvasLabel} - ${currentParsedName.pageLabel} | ${accessTypeLabel}`;
+    const pageDescription = `${APP_META_DESCRIPTION} Canvas: ${currentParsedName.canvasLabel}. Page: ${currentParsedName.pageLabel}. Access: ${accessTypeLabel}.`;
+    const pageUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+
+    document.title = pageTitle;
+    setMeta('description', pageDescription, 'name');
+    setMeta('og:title', pageTitle, 'property');
+    setMeta('og:description', pageDescription, 'property');
+    setMeta('og:url', pageUrl, 'property');
+    setMeta('twitter:title', pageTitle, 'name');
+    setMeta('twitter:description', pageDescription, 'name');
+  }, [
+    activeCanvasName,
+    currentParsedName.canvasLabel,
+    currentParsedName.pageLabel,
+    effectiveCanvasLoading,
+    effectiveReadOnlyMode,
+  ]);
 
   useEffect(() => {
     if (!user || !currentCanvasName || !currentCanvasId || !isEditorMode) return;
@@ -851,7 +932,7 @@ const Index = () => {
           onRenameCanvas={canMutateCanvas && session?.user?.id ? renameCanvas : undefined}
           onRenamePage={canMutateCanvas && session?.user?.id ? renamePage : undefined}
           leftOffsetPercent={canvasLeftOffsetPercent}
-          showSidebarToggle={isLoggedIn && isEditorMode}
+          showSidebarToggle={isLoggedIn && (isEditorMode || effectiveReadOnlyMode)}
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
           collaborators={collaborators}
@@ -862,7 +943,7 @@ const Index = () => {
         />
       )}
 
-      {isLoggedIn && isSidebarOpen && canMutateCanvas && (
+      {isLoggedIn && isSidebarOpen && (canMutateCanvas || effectiveReadOnlyMode) && (
         <>
           {isMobile && (
             <div
@@ -872,12 +953,12 @@ const Index = () => {
           )}
           <CanvasSidebar
             loggedInUserId={session?.user?.id ?? null}
-            canvases={canvases}
+            canvases={sidebarCanvases}
             sharedCanvases={sharedCanvases}
-            shareAccessByCanvasId={shareAccessByCanvasId}
+            shareAccessByCanvasId={sidebarShareAccessByCanvasId}
             joinedCanvasAccessByCanvasId={joinedCanvasAccessByCanvasId}
             currentCanvasId={effectiveCurrentCanvasId}
-            onCreateCanvas={handleCreateCanvasFromUi}
+            onCreateCanvas={canMutateCanvas ? handleCreateCanvasFromUi : undefined}
             onSelectCanvas={(id) => {
               handleSelectCanvasFromUi(id);
               if (isMobile) setIsSidebarOpen(false);
@@ -953,7 +1034,7 @@ const Index = () => {
           mode={rawUserToken ? 'share' : 'home'}
           loading={loading}
           onSignIn={() => {
-            void signInWithGoogle({ intent: 'dashboard' });
+            void signInWithGoogle({ intent: rawUserToken ? 'return-current' : 'dashboard' });
           }}
           presentation="overlay"
           dismissOnBackdrop={true}

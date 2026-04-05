@@ -154,8 +154,9 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
   });
 
   const setEmbedZoomThrough = (active: boolean) => {
-    if (typeof document === 'undefined') return;
-    document.documentElement.classList.toggle('cnvs-zoom-through-embeds', active);
+    const canvasEl = containerRef.current;
+    if (!canvasEl) return;
+    canvasEl.classList.toggle('cnvs-zoom-through-embeds', active);
   };
 
   const scheduleEmbedZoomThroughOff = (delay = 160) => {

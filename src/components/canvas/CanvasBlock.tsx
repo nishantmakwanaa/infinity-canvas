@@ -51,11 +51,18 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
     );
   };
 
-  const startPointerDrag = (e: React.PointerEvent<HTMLElement>) => {
+  const startPointerDrag = (
+    e: React.PointerEvent<HTMLElement>,
+    options?: { requireSelectedTouch?: boolean }
+  ) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
 
     // On touch devices, first tap selects; dragging starts on subsequent gesture.
-    if (e.pointerType === 'touch' && !isSelected) return;
+    const requireSelectedTouch = options?.requireSelectedTouch ?? true;
+    if (e.pointerType === 'touch' && requireSelectedTouch && !isSelected) return;
+    if (e.pointerType === 'touch') {
+      e.preventDefault();
+    }
 
     dragRef.current = { dragging: true, startX: e.clientX, startY: e.clientY, origX: block.x, origY: block.y };
     const onMove = (ev: PointerEvent) => {
@@ -97,7 +104,7 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
 
     e.stopPropagation();
     selectBlock(block.id);
-    startPointerDrag(e);
+    startPointerDrag(e, { requireSelectedTouch: false });
   };
 
   const handleResize = (e: React.MouseEvent, dir: ResizeDir) => {
@@ -152,7 +159,7 @@ function CanvasBlockComponentImpl({ block, readOnly }: Props) {
       onWheelCapture={handleBlockWheelCapture}
     >
       <div
-        className={`flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 ${readOnly ? '' : 'cursor-move'}`}
+        className={`flex items-center justify-between px-2 h-7 border-b border-border bg-secondary/50 ${readOnly ? '' : 'cursor-move touch-none'}`}
         onPointerDown={handleHeaderPointerDown}
       >
         <span className="text-[10px] font-mono uppercase tracking-widest truncate" style={{ color: mutedColor || undefined }}>{typeLabel}</span>
