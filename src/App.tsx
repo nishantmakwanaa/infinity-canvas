@@ -29,27 +29,27 @@ const App = () => {
   useEffect(() => {
     const onThemeShortcut = (e: KeyboardEvent) => {
       if (e.repeat) return;
-      const hasCtrlShiftOnly = e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
-      if (!hasCtrlShiftOnly) return;
+      const hasCtrlAltOnly = e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey;
+      if (!hasCtrlAltOnly) return;
 
       if (e.code === 'Digit7') {
         e.preventDefault();
         setThemePreference('light');
-        toast.success('Theme mode changed to Light', { description: 'Shortcut: Ctrl + Shift + 7' });
+        toast.success('Theme mode changed to Light', { description: 'Shortcut: Ctrl + Alt + 7' });
         return;
       }
 
       if (e.code === 'Digit8') {
         e.preventDefault();
         setThemePreference('dark');
-        toast.success('Theme mode changed to Dark', { description: 'Shortcut: Ctrl + Shift + 8' });
+        toast.success('Theme mode changed to Dark', { description: 'Shortcut: Ctrl + Alt + 8' });
         return;
       }
 
       if (e.code === 'Digit9') {
         e.preventDefault();
         setThemePreference('auto');
-        toast.success('Theme mode changed to Auto', { description: 'Shortcut: Ctrl + Shift + 9' });
+        toast.success('Theme mode changed to Auto', { description: 'Shortcut: Ctrl + Alt + 9' });
       }
     };
 

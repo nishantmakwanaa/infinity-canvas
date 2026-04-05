@@ -137,6 +137,19 @@ export function AppHeader({
   const isOwnerShareControls = Boolean(canShareCurrentCanvas);
   const effectiveShareUrl = canCopyReadOnlyShareUrl ? (readOnlyShareUrl || '') : shareUrl;
 
+  const handleDownloadExtensionZip = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    const extensionZipUrl = '/downloads/cnvs-chrome-extension.zip';
+    const link = document.createElement('a');
+    link.href = extensionZipUrl;
+    link.download = 'cnvs-chrome-extension.zip';
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Chrome extension ZIP download started');
+  }, []);
+
   const emitShareAccessUpdated = useCallback((payload?: {
     canvasId?: string | null;
     accessLevel?: 'viewer' | 'editor';
@@ -754,7 +767,7 @@ export function AppHeader({
                     onClose={() => setShowMenu(false)}
                     isMobile={isMobile}
                     onOpenShortcuts={() => setShowShortcutsDialog(true)}
-                    onOpenExtension={() => toast.info('Browser extension coming soon!')}
+                    onOpenExtension={handleDownloadExtensionZip}
                   />
                 </>
               )}
@@ -774,7 +787,7 @@ export function AppHeader({
                   onClose={() => setShowMenu(false)}
                   isMobile={isMobile}
                   onOpenShortcuts={() => setShowShortcutsDialog(true)}
-                  onOpenExtension={() => toast.info('Browser extension coming soon!')}
+                  onOpenExtension={handleDownloadExtensionZip}
                 />
               </>
             )}

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CNVS Side Split",
-  "version": "1.0.1",
+  "version": "1.1.5",
   "description": "Open CNVS in a resizable right-side split panel beside any website.",
   "permissions": ["storage", "tabs", "scripting", "activeTab"],
   "host_permissions": ["<all_urls>", "https://canvas.nishantmakwana.tech/*"],
@@ -15,6 +15,22 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src https://canvas.nishantmakwana.tech"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "panel.html",
+        "panel.js",
+        "icons/icon-16.png",
+        "icons/icon-32.png",
+        "icons/icon-48.png",
+        "icons/icon-128.png"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "action": {
     "default_title": "Toggle CNVS side panel",
     "default_icon": {
@@ -34,6 +50,8 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "match_about_blank": true,
+      "match_origin_as_fallback": true,
       "js": ["content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"

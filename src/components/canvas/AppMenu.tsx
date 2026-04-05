@@ -114,7 +114,7 @@ export function AppMenu({ onClose, isMobile = false, onOpenShortcuts, onOpenExte
               }}
               className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
             >
-              <Puzzle size={12} /> Add to browser
+              <Puzzle size={12} /> Download extension ZIP
             </button>
 
             <button
@@ -260,7 +260,7 @@ export function AppMenu({ onClose, isMobile = false, onOpenShortcuts, onOpenExte
           }}
           className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors"
         >
-          <Puzzle size={12} /> Add to browser
+          <Puzzle size={12} /> Download extension ZIP
         </button>
 
         <button onClick={() => { onClose(); onOpenShortcuts(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs font-mono hover:bg-accent transition-colors">

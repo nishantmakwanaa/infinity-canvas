@@ -1,6 +1,5 @@
 :root {
   --cnvs-ext-width: 460px;
-  --cnvs-ext-handle-width: 8px;
 }
 
 html.cnvs-ext-open,
@@ -9,10 +8,15 @@ html.cnvs-ext-open body {
   max-width: 100%;
 }
 
-html.cnvs-ext-open body {
+html.cnvs-ext-open {
   padding-right: var(--cnvs-ext-width) !important;
   box-sizing: border-box;
   transition: padding-right 140ms ease-out;
+}
+
+html.cnvs-ext-open body {
+  padding-right: 0 !important;
+  box-sizing: border-box;
 }
 
 #cnvs-ext-root {
@@ -28,26 +32,6 @@ html.cnvs-ext-open body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-
-#cnvs-ext-handle {
-  position: absolute;
-  left: calc(-1 * var(--cnvs-ext-handle-width));
-  top: 0;
-  width: var(--cnvs-ext-handle-width);
-  height: 100%;
-  cursor: col-resize;
-  background: transparent;
-}
-
-#cnvs-ext-handle::after {
-  content: '';
-  position: absolute;
-  left: 3px;
-  top: 0;
-  width: 2px;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.45);
 }
 
 #cnvs-ext-frame {
