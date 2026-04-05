@@ -27,6 +27,15 @@ const DRAWING_TOOLS = ['pencil', 'eraser', 'text', 'shape', 'line', 'arrow'];
 const MEDIA_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'svg', 'gif', 'apng', 'bmp', 'ico', 'heic', 'heif', 'heiv', 'tif', 'tiff', 'jfif'];
 const MEDIA_VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogv', 'mov', 'm3u8', 'm4v', 'avi', 'wmv', 'flv', 'mkv', '3gp', 'ts', 'mts', 'm2ts', 'gifv'];
 const MEDIA_AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'oga', 'ogg', 'opus', 'aiff', 'alac', 'amr', 'wma', 'weba', 'mpga', 'mid', 'midi'];
+const MEDIA_PDF_EXTENSIONS = ['pdf'];
+const DOCUMENT_EXTENSIONS = [
+  'doc', 'docx', 'odt',
+  'xls', 'xlsx', 'xlsm', 'ods', 'csv', 'tsv',
+  'ppt', 'pptx', 'odp',
+  'txt', 'rtf', 'md', 'markdown', 'log',
+  'json', 'xml', 'yaml', 'yml',
+  'zip', 'rar', '7z', 'tar', 'gz', 'bz2',
+];
 
 function extensionFromUrl(rawUrl: string) {
   const cleaned = rawUrl.split('#')[0].split('?')[0];
@@ -46,6 +55,69 @@ function toUrlCandidate(input: string) {
   return null;
 }
 
+function sanitizeFilename(name: string) {
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/[?#].*$/, '').replace(/[_-]+/g, ' ');
+}
+
+function getFileNameFromUrl(rawUrl: string) {
+  const candidate = toUrlCandidate(rawUrl);
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    const segment = parsed.pathname.split('/').filter(Boolean).pop() || '';
+    if (!segment) return '';
+    return sanitizeFilename(decodeURIComponent(segment));
+  } catch {
+    return '';
+  }
+}
+
+function isPdfUrl(input: string) {
+  const candidate = toUrlCandidate(input);
+  if (!candidate) return false;
+  if (/^data:application\/pdf/i.test(candidate)) return true;
+  const ext = extensionFromUrl(candidate);
+  if (MEDIA_PDF_EXTENSIONS.includes(ext)) return true;
+  return /(^|[/?=&_-])pdf([/?=&_.-]|$)/i.test(candidate);
+}
+
+function isDocumentUrl(input: string) {
+  const candidate = toUrlCandidate(input);
+  if (!candidate) return false;
+  const ext = extensionFromUrl(candidate);
+  if (DOCUMENT_EXTENSIONS.includes(ext)) return true;
+  return /(^|[/?=&_-])(document|spreadsheet|presentation|attachment|download)([/?=&_-]|$)/i.test(candidate);
+}
+
+function toDocumentLabel(rawUrl: string) {
+  const filename = getFileNameFromUrl(rawUrl);
+  if (!filename) return 'Document link';
+  return `Document: ${filename}`;
+}
+
+function extractFirstUrlFromHtml(html: string) {
+  const source = String(html || '').trim();
+  if (!source) return '';
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(source, 'text/html');
+    const href = doc.querySelector('a[href]')?.getAttribute('href') || '';
+    if (href.trim()) return href.trim();
+    const src = doc.querySelector('[src]')?.getAttribute('src') || '';
+    if (src.trim()) return src.trim();
+  } catch {
+    // Ignore parser errors and continue with regex fallback.
+  }
+
+  const hrefMatch = source.match(/href\s*=\s*["']([^"']+)["']/i);
+  if (hrefMatch?.[1]) return hrefMatch[1].trim();
+  const srcMatch = source.match(/src\s*=\s*["']([^"']+)["']/i);
+  if (srcMatch?.[1]) return srcMatch[1].trim();
+  return '';
+}
+
 function isUrlLike(input: string) {
   const candidate = toUrlCandidate(input);
   if (!candidate) return false;
@@ -61,6 +133,7 @@ function isMediaUrl(input: string) {
   const candidate = toUrlCandidate(input);
   if (!candidate) return false;
   if (/^(blob:|data:|file:)/i.test(candidate)) return true;
+  if (isPdfUrl(candidate)) return true;
 
   try {
     const parsed = new URL(candidate);
@@ -96,7 +169,7 @@ function isMediaUrl(input: string) {
   }
 
   const ext = extensionFromUrl(candidate);
-  if (MEDIA_IMAGE_EXTENSIONS.includes(ext) || MEDIA_VIDEO_EXTENSIONS.includes(ext) || MEDIA_AUDIO_EXTENSIONS.includes(ext)) {
+  if (MEDIA_IMAGE_EXTENSIONS.includes(ext) || MEDIA_VIDEO_EXTENSIONS.includes(ext) || MEDIA_AUDIO_EXTENSIONS.includes(ext) || MEDIA_PDF_EXTENSIONS.includes(ext)) {
     return true;
   }
 
@@ -554,6 +627,14 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
         return;
       }
 
+      if (type === 'link') {
+        updateBlock(createdId, {
+          url: payload.url || '',
+          content: payload.content || '',
+        });
+        return;
+      }
+
       if (payload.url) {
         updateBlock(createdId, { url: payload.url });
       }
@@ -564,6 +645,8 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       .split('\n')
       .map((line) => line.trim())
       .find((line) => line && !line.startsWith('#')) || '';
+    const htmlFromClipboard = String(clipboardData?.getData('text/html') || '').trim();
+    const htmlUrl = extractFirstUrlFromHtml(htmlFromClipboard);
 
     const maybeSerialized = plainFromClipboard.startsWith('{') ? plainFromClipboard : '';
     if (maybeSerialized) {
@@ -594,17 +677,27 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     }
 
     const items = clipboardData?.items ? Array.from(clipboardData.items) : [];
-    const mediaFileItem = items.find((item) => item.kind === 'file' && /^(image|video|audio)\//i.test(item.type));
+    const mediaFileItem = items.find((item) => {
+      if (item.kind !== 'file') return false;
+      if (/^(image|video|audio)\//i.test(item.type)) return true;
+      if (/^application\/pdf$/i.test(item.type)) return true;
+      const file = item.getAsFile();
+      return Boolean(file?.name && /\.pdf$/i.test(file.name));
+    });
     if (mediaFileItem) {
       const file = mediaFileItem.getAsFile();
       if (file) {
         createSimpleBlock('media', { url: URL.createObjectURL(file) });
-        toast.success('Media pasted');
+        if (/^application\/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) {
+          toast.success('PDF pasted as media block');
+        } else {
+          toast.success('Media pasted');
+        }
         return;
       }
     }
 
-    let text = uriListFromClipboard || plainFromClipboard;
+    let text = uriListFromClipboard || htmlUrl || plainFromClipboard;
     if (!text) {
       try {
         text = await navigator.clipboard.readText();
@@ -634,13 +727,26 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     const normalizedText = text.trim();
     const urlCandidate = toUrlCandidate(normalizedText);
     const treatAsUrl = Boolean(urlCandidate && isUrlLike(normalizedText));
+    const inlineUrlMatch = treatAsUrl
+      ? null
+      : normalizedText.match(/(?:https?:\/\/|www\.)[^\s<>{}"']+/i);
+    const inlineUrlCandidate = inlineUrlMatch?.[0] ? toUrlCandidate(inlineUrlMatch[0]) : null;
+    const resolvedUrl = treatAsUrl
+      ? urlCandidate
+      : (inlineUrlCandidate && isUrlLike(inlineUrlCandidate) ? inlineUrlCandidate : null);
 
-    if (treatAsUrl && urlCandidate) {
-      if (isMediaUrl(urlCandidate)) {
-        createSimpleBlock('media', { url: urlCandidate });
+    if (resolvedUrl) {
+      if (isPdfUrl(resolvedUrl)) {
+        createSimpleBlock('media', { url: resolvedUrl });
+        toast.success('PDF media block created from link');
+      } else if (isMediaUrl(resolvedUrl)) {
+        createSimpleBlock('media', { url: resolvedUrl });
         toast.success('Media block created from link');
+      } else if (isDocumentUrl(resolvedUrl)) {
+        createSimpleBlock('link', { url: resolvedUrl, content: toDocumentLabel(resolvedUrl) });
+        toast.success('Document link block created from link');
       } else {
-        createSimpleBlock('link', { url: urlCandidate });
+        createSimpleBlock('link', { url: resolvedUrl });
         toast.success('Link block created from link');
       }
       return;

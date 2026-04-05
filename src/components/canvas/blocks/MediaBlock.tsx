@@ -1,5 +1,5 @@
 import { useCanvasStore, CanvasBlock } from '@/store/canvasStore';
-import { ImageIcon, Play, Pause, Volume2, VolumeX } from 'lucide-react';
+import { ImageIcon, Play, Pause, Volume2, VolumeX, FileText } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useIsMobile } from '@/hooks/use-mobile';
 
@@ -14,6 +14,7 @@ function normalizeUrl(raw: string) {
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'avif', 'svg', 'gif', 'apng', 'bmp', 'ico', 'heic', 'heif', 'heiv', 'tif', 'tiff', 'jfif'];
 const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogv', 'mov', 'm3u8', 'm4v', 'avi', 'wmv', 'flv', 'mkv', '3gp', 'ts', 'mts', 'm2ts', 'gifv'];
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'oga', 'ogg', 'opus', 'aiff', 'alac', 'amr', 'wma', 'weba', 'mpga', 'mid', 'midi'];
+const PDF_EXTENSIONS = ['pdf'];
 
 function extFromUrl(url: string) {
   const cleaned = url.split('#')[0].split('?')[0];
@@ -22,29 +23,37 @@ function extFromUrl(url: string) {
   return cleaned.slice(lastDot + 1).toLowerCase();
 }
 
-function isVideo(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio') {
+function isVideo(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio' | 'pdf') {
   if (/^blob:/i.test(url)) return blobKind === 'video';
   const ext = extFromUrl(url);
   if (VIDEO_EXTENSIONS.includes(ext)) return true;
   return /(^|[/?=&_-])(video|stream|clip|movie)([/?=&_-]|$)/i.test(url);
 }
 
-function isImage(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio') {
+function isImage(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio' | 'pdf') {
   if (/^blob:/i.test(url)) return blobKind === 'image';
   const ext = extFromUrl(url);
   return IMAGE_EXTENSIONS.includes(ext);
 }
 
-function isGif(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio') {
+function isGif(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio' | 'pdf') {
   if (/^blob:/i.test(url)) return false;
   return blobKind !== 'video' && /\.gif(\?|$)/i.test(url);
 }
 
-function isAudio(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio') {
+function isAudio(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio' | 'pdf') {
   if (/^blob:/i.test(url)) return blobKind === 'audio';
   const ext = extFromUrl(url);
   if (AUDIO_EXTENSIONS.includes(ext)) return true;
   return /(^|[/?=&_-])(audio|podcast|music|sound|voice)([/?=&_-]|$)/i.test(url);
+}
+
+function isPdf(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio' | 'pdf') {
+  if (/^blob:/i.test(url)) return blobKind === 'pdf';
+  if (/^data:application\/pdf/i.test(url)) return true;
+  const ext = extFromUrl(url);
+  if (PDF_EXTENSIONS.includes(ext)) return true;
+  return /(^|[/?=&_-])(pdf)([/?=&_.-]|$)/i.test(url);
 }
 
 function toEmbedUrl(url: string) {
@@ -141,7 +150,7 @@ function hasVideoAudioTrack(video: HTMLVideoElement) {
   return true;
 }
 
-function getMediaAutoSize(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio') {
+function getMediaAutoSize(url: string, blobKind: 'unknown' | 'video' | 'image' | 'audio' | 'pdf') {
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase();
@@ -159,6 +168,7 @@ function getMediaAutoSize(url: string, blobKind: 'unknown' | 'video' | 'image' |
     const isImageLike = isImage(path, blobKind);
     const isVideoLike = isVideo(path, blobKind);
     const isAudioLike = isAudio(path, blobKind);
+    const isPdfLike = isPdf(path, blobKind);
 
     if (isYoutube || isVimeo) return { width: 620, height: 390 };
     if (isTwitter) return { width: 580, height: 760 };
@@ -169,11 +179,13 @@ function getMediaAutoSize(url: string, blobKind: 'unknown' | 'video' | 'image' |
     if (isImageLike) return { width: 520, height: 420 };
     if (isVideoLike) return { width: 620, height: 430 };
     if (isAudioLike) return { width: 560, height: 170 };
+    if (isPdfLike) return { width: 700, height: 520 };
     return { width: 560, height: 420 };
   } catch {
     if (isImage(url, blobKind)) return { width: 520, height: 420 };
     if (isVideo(url, blobKind)) return { width: 620, height: 430 };
     if (isAudio(url, blobKind)) return { width: 560, height: 170 };
+    if (isPdf(url, blobKind)) return { width: 700, height: 520 };
     return null;
   }
 }
@@ -189,7 +201,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [videoHasAudio, setVideoHasAudio] = useState(true);
-  const [blobMediaKind, setBlobMediaKind] = useState<'unknown' | 'video' | 'image' | 'audio'>('unknown');
+  const [blobMediaKind, setBlobMediaKind] = useState<'unknown' | 'video' | 'image' | 'audio' | 'pdf'>('unknown');
   const lastAutoSizeUrl = useRef('');
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -202,6 +214,8 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
       setBlobMediaKind('audio');
     } else if (file.type.startsWith('image/')) {
       setBlobMediaKind('image');
+    } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+      setBlobMediaKind('pdf');
     } else {
       setBlobMediaKind('unknown');
     }
@@ -244,6 +258,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
   const isAudioUrl = hasUrl && isAudio(normalizedUrl, blobMediaKind);
   const isGifUrl = hasUrl && isGif(normalizedUrl, blobMediaKind);
   const isImageUrl = hasUrl && isImage(normalizedUrl, blobMediaKind);
+  const isPdfUrl = hasUrl && isPdf(normalizedUrl, blobMediaKind);
   const embedZoomResetTimerRef = useRef<number | null>(null);
 
   const setEmbedZoomThrough = (active: boolean) => {
@@ -380,7 +395,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*,video/*,audio/*,.gif,.png,.jpg,.jpeg,.webp,.svg,.heic,.heif,.heiv,.bmp,.tif,.tiff,.mp4,.webm,.ogv,.mov,.m4v,.avi,.mkv,.wmv,.flv,.3gp,.m3u8,.mp3,.wav,.aac,.flac,.m4a,.oga,.ogg,.opus,.aiff,.alac,.amr,.wma,.weba,.mpga,.mid,.midi"
+            accept="image/*,video/*,audio/*,application/pdf,.pdf,.gif,.png,.jpg,.jpeg,.webp,.svg,.heic,.heif,.heiv,.bmp,.tif,.tiff,.mp4,.webm,.ogv,.mov,.m4v,.avi,.mkv,.wmv,.flv,.3gp,.m3u8,.mp3,.wav,.aac,.flac,.m4a,.oga,.ogg,.opus,.aiff,.alac,.amr,.wma,.weba,.mpga,.mid,.midi"
             className="hidden"
             onChange={handleFileUpload}
           />
@@ -506,6 +521,29 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
                 className="flex-1 accent-foreground"
               />
             </div>
+          </div>
+        ) : isPdfUrl ? (
+          <div className="flex-1 min-h-0 border border-border bg-secondary/20 overflow-hidden">
+            <div className="h-8 px-2 border-b border-border/70 flex items-center justify-between">
+              <div className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
+                <FileText size={11} /> PDF preview
+              </div>
+              <a
+                href={normalizedUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] font-mono text-muted-foreground hover:text-foreground"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Open
+              </a>
+            </div>
+            <iframe
+              src={normalizedUrl}
+              className="w-full h-[calc(100%-2rem)] border-0 cnvs-media-embed"
+              style={{ touchAction: isMobile ? 'none' : 'auto' }}
+              title="pdf-preview"
+            />
           </div>
         ) : isGifUrl ? (
           <img

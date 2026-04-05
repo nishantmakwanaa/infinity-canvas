@@ -273,6 +273,7 @@ const Index = () => {
   const collabEditLocked = requireEditorSlotForCurrentCanvas && !editorSlotGranted && !isCurrentCanvasOwned && editorSlotCapReached;
   const effectiveReadOnlyMode = isReadOnlyMode || isAuthRequiredMode || collabEditLocked || (isEditorMode && !hasWritePrivileges);
   const canMutateCanvas = isEditorMode && !effectiveReadOnlyMode;
+  const canManageSidebarCollections = isLoggedIn && (canMutateCanvas || Boolean(rawUserToken));
 
   const effectiveSidebarWidthPercent = isMobile ? 70 : sidebarWidthPercent;
   const canvasLeftOffsetPercent = isLoggedIn && isSidebarOpen && !isMobile && (isEditorMode || effectiveReadOnlyMode)
@@ -287,11 +288,11 @@ const Index = () => {
     || sharedCanvases.length
   );
   // Keep chrome mounted after first context load so sidebar does not "refresh" on canvas switches.
-  const showHeaderAndBars = hasLoadedCanvasContext || !effectiveCanvasLoading;
+  const showHeaderAndBars = isLoggedIn || hasLoadedCanvasContext || !effectiveCanvasLoading;
   const activeCanvasName = currentCanvasName || routeCanvasName;
   const currentParsedName = parseCanvasRouteName(activeCanvasName);
-  const sidebarCanvases = canMutateCanvas ? canvases : [];
-  const sidebarShareAccessByCanvasId = canMutateCanvas ? shareAccessByCanvasId : {};
+  const sidebarCanvases = canManageSidebarCollections ? canvases : [];
+  const sidebarShareAccessByCanvasId = canManageSidebarCollections ? shareAccessByCanvasId : {};
   const pageItems = useMemo(
     () => {
       if (isReadOnlyMode && routeCanvasId) {
@@ -507,13 +508,16 @@ const Index = () => {
   const handleSelectCanvasFromUi = useCallback((canvasId: string) => {
     if (!canvasId) return;
     if (rawUserToken) {
+      pendingSidebarActionRef.current = { type: 'select', canvasId };
       setRouteMode('home');
       setRouteCanvasId(null);
       setRouteCanvasName(null);
       setRouteError('');
+      navigate('/', { replace: true });
+      return;
     }
     void openCanvasFromUi(canvasId);
-  }, [openCanvasFromUi, rawUserToken]);
+  }, [navigate, openCanvasFromUi, rawUserToken]);
 
   const handleCreateCanvasFromUi = useCallback(() => {
     if (rawUserToken) {
@@ -531,39 +535,18 @@ const Index = () => {
   const handleDeleteCanvasesFromUi = useCallback((ids: string[]) => {
     if (!ids.length) return;
     if (rawUserToken) {
-      // Leaving from a shared token route should happen immediately, then return home.
-      void (async () => {
-        const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-        if (session?.user?.id && uniqueIds.length) {
-          const leaveRpc = await supabase.rpc('leave_joined_canvases', {
-            p_canvas_ids: uniqueIds,
-          });
-
-          if (leaveRpc?.error) {
-            const fallback = await supabase
-              .from('canvas_permissions')
-              .delete()
-              .eq('user_id', session.user.id)
-              .in('canvas_id', uniqueIds);
-
-            if (fallback.error) {
-              toast.error('Unable to leave selected collaborative canvas right now.');
-            }
-          }
-        }
-
-        // Clear route-mode snapshot so home never renders stale shared content.
-        useCanvasStore.getState().loadCanvas([], { x: 0, y: 0 }, 1, []);
-        setRouteMode('home');
-        setRouteCanvasId(null);
-        setRouteCanvasName(null);
-        setRouteError('');
-        navigate('/', { replace: true });
-      })();
+      pendingSidebarActionRef.current = { type: 'delete', ids: Array.from(new Set(ids.filter(Boolean))) };
+      // Clear route snapshot first so home transition does not render stale shared content.
+      useCanvasStore.getState().loadCanvas([], { x: 0, y: 0 }, 1, []);
+      setRouteMode('home');
+      setRouteCanvasId(null);
+      setRouteCanvasName(null);
+      setRouteError('');
+      navigate('/', { replace: true });
       return;
     }
     void deleteCanvases(ids);
-  }, [deleteCanvases, navigate, rawUserToken, session?.user?.id]);
+  }, [deleteCanvases, navigate, rawUserToken]);
 
   useEffect(() => {
     if (rawUserToken) return;
@@ -1165,7 +1148,7 @@ const Index = () => {
         />
       )}
 
-      {isLoggedIn && isSidebarOpen && (canMutateCanvas || effectiveReadOnlyMode) && (
+      {isLoggedIn && isSidebarOpen && (canManageSidebarCollections || effectiveReadOnlyMode || isRouteLoading) && (
         <>
           {isMobile && (
             <div
@@ -1180,7 +1163,7 @@ const Index = () => {
             shareAccessByCanvasId={sidebarShareAccessByCanvasId}
             joinedCanvasAccessByCanvasId={joinedCanvasAccessByCanvasId}
             currentCanvasId={effectiveCurrentCanvasId}
-            onCreateCanvas={canMutateCanvas ? handleCreateCanvasFromUi : undefined}
+            onCreateCanvas={canManageSidebarCollections ? handleCreateCanvasFromUi : undefined}
             onSelectCanvas={(id) => {
               handleSelectCanvasFromUi(id);
               if (isMobile) setIsSidebarOpen(false);

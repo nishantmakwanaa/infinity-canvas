@@ -1019,13 +1019,35 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return;
     }
 
-    const joined = joinedList || [];
-    const allAccessible = [...list, ...joined.filter((canvas) => !list.some((owned) => owned.id === canvas.id))];
+    let ownedList = list;
+    let joined = joinedList || [];
+    let shareAccessMap = shareAccess || {};
+
+    // Keep at least one owned canvas globally, even if user currently only has joined canvases.
+    if (!ownedList.length) {
+      const bootstrapOwned = await ensureSingleBootstrapCanvas(userId);
+      if (wasAutoLoadCancelled()) {
+        isLoadingRef.current = false;
+        return;
+      }
+      if (bootstrapOwned?.id) {
+        const refreshed = await refreshAllCanvasCollections(userId);
+        if (wasAutoLoadCancelled()) {
+          isLoadingRef.current = false;
+          return;
+        }
+        ownedList = (refreshed.owned || [bootstrapOwned]) as CanvasMeta[];
+        joined = (refreshed.shared || joined) as CanvasMeta[];
+        shareAccessMap = refreshed.shareAccess || shareAccessMap;
+      }
+    }
+
+    const allAccessible = [...ownedList, ...joined.filter((canvas) => !ownedList.some((owned) => owned.id === canvas.id))];
     const accessibleById = new Map(allAccessible.map((canvas) => [canvas.id, canvas]));
 
-    const firstOwnedPrivateFromAccess = list.find((canvas) => !shareAccess?.[canvas.id]);
+    const firstOwnedPrivateFromAccess = ownedList.find((canvas) => !shareAccessMap?.[canvas.id]);
 
-    const ownedIds = list.map((canvas) => canvas.id);
+    const ownedIds = ownedList.map((canvas) => canvas.id);
     const sharedOwnedIdSet = new Set<string>();
     if (ownedIds.length) {
       const { data: shareRows, error: shareErr, status: shareStatus } = await supabase
@@ -1046,14 +1068,14 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       }
     }
 
-    const firstOwnedPrivateByQuery = list.find((canvas) => !sharedOwnedIdSet.has(canvas.id));
+    const firstOwnedPrivateByQuery = ownedList.find((canvas) => !sharedOwnedIdSet.has(canvas.id));
 
     const localLastOpenedId = readLastOpenedCanvasId(userId);
     const serverLastOpenedId = await readServerLastOpenedCanvasId();
     const preferredLastOpenedId = [localLastOpenedId, serverLastOpenedId].find((id) => Boolean(id && accessibleById.has(id))) || null;
     const firstFromLastOpened = preferredLastOpenedId ? accessibleById.get(preferredLastOpenedId) : null;
 
-    const first = firstFromLastOpened || firstOwnedPrivateFromAccess || firstOwnedPrivateByQuery || allAccessible[0] || list[0];
+    const first = firstFromLastOpened || firstOwnedPrivateFromAccess || firstOwnedPrivateByQuery || allAccessible[0] || ownedList[0];
     const guestSnapshot = readGuestSnapshot();
     const hasGuestEdits = !isBlankSnapshot(guestSnapshot);
 
@@ -1062,14 +1084,14 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     }
 
     if (hasGuestEdits && guestSnapshot) {
-      const latestOwned = list[0] || null;
+      const latestOwned = ownedList[0] || null;
       const baseOwnedName = latestOwned?.name || '';
       const baseParsed = parseCanvasRouteName(baseOwnedName);
       const hasOwnedCanvas = Boolean(baseOwnedName.trim());
 
       let canvasName = createDefaultCanvasRouteName();
       if (hasOwnedCanvas) {
-        const pageSlugs = list
+        const pageSlugs = ownedList
           .map((canvas) => parseCanvasRouteName(canvas.name))
           .filter((parsed) => parsed.canvasSlug === baseParsed.canvasSlug)
           .map((parsed) => parsed.pageSlug);
@@ -1292,7 +1314,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
     isLoadingRef.current = true;
 
     const ownedIdSet = new Set(canvases.map((canvas) => canvas.id));
-    const joinedIds = ids.filter((id) => !ownedIdSet.has(id));
+    const joinedIds = Array.from(new Set(ids.filter((id) => !ownedIdSet.has(id) && Boolean(id))));
     const ownedIds = ids.filter((id) => ownedIdSet.has(id));
 
     let hadDeleteError = false;
@@ -1302,6 +1324,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       const leaveRpc: any = await supabase.rpc('leave_joined_canvases', {
         p_canvas_ids: joinedIds,
       });
+
+      let leftIds: string[] = [];
+      let joinedLeaveFailed = 0;
 
       if (leaveRpc?.error) {
         if (isRpcMissingError(leaveRpc.error) || isPostgrestResourceMissingError(leaveRpc.error)) {
@@ -1323,22 +1348,39 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
             warnSchemaNotDeployed();
           }
         } else {
-          joinedIds.forEach((id) => removeJoinedCanvasAccess(userId, id));
+          leftIds = joinedIds;
         }
       } else {
         const leaveRows = Array.isArray(leaveRpc.data) ? leaveRpc.data : [];
-        const leftIds = leaveRows
-          .filter((row: any) => Boolean(row?.left_ok) && typeof row?.canvas_id === 'string')
-          .map((row: any) => String(row.canvas_id));
 
-        if (leftIds.length) {
-          leftIds.forEach((id) => removeJoinedCanvasAccess(userId, id));
+        if (!leaveRows.length) {
+          // Treat empty payload as idempotent success; fallback path still cleans local membership.
+          leftIds = joinedIds;
+        } else {
+          const rowByCanvasId = new Map<string, any>();
+          leaveRows.forEach((row: any) => {
+            const id = String(row?.canvas_id || '').trim();
+            if (!id) return;
+            rowByCanvasId.set(id, row);
+          });
+
+          joinedIds.forEach((id) => {
+            const row = rowByCanvasId.get(id);
+            if (!row || row?.left_ok !== false) {
+              leftIds.push(id);
+            } else {
+              joinedLeaveFailed += 1;
+            }
+          });
         }
 
-        const failedCount = Math.max(0, joinedIds.length - leftIds.length);
-        if (failedCount > 0) {
+        if (joinedLeaveFailed > 0) {
           hadDeleteError = true;
         }
+      }
+
+      if (leftIds.length) {
+        leftIds.forEach((id) => removeJoinedCanvasAccess(userId, id));
       }
     }
 
@@ -1368,9 +1410,21 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       return;
     }
 
+    let ownedAfterDelete = (owned || []) as CanvasMeta[];
+    let sharedAfterDelete = (shared || []) as CanvasMeta[];
+
+    if (!ownedAfterDelete.length) {
+      const bootstrapOwned = await ensureSingleBootstrapCanvas(userId);
+      if (bootstrapOwned?.id) {
+        const refreshed = await refreshAllCanvasCollections(userId);
+        ownedAfterDelete = (refreshed.owned || [bootstrapOwned]) as CanvasMeta[];
+        sharedAfterDelete = (refreshed.shared || sharedAfterDelete) as CanvasMeta[];
+      }
+    }
+
     const accessibleAfterDelete = [
-      ...((owned || []) as CanvasMeta[]),
-      ...((shared || []) as CanvasMeta[]),
+      ...ownedAfterDelete,
+      ...sharedAfterDelete,
     ];
     const activeId = currentCanvasIdRef.current;
     const activeStillExists = activeId ? accessibleAfterDelete.some((canvas) => canvas.id === activeId) : false;
@@ -1404,7 +1458,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
         toast.error('Some selected canvases could not be removed.');
       }
     }
-  }, [canvases, createCanvas, enabled, loadCanvasById, refreshAllCanvasCollections, removeJoinedCanvasAccess, session?.user?.id, warnPermissionIssue, warnSchemaNotDeployed]);
+  }, [canvases, createCanvas, enabled, ensureSingleBootstrapCanvas, loadCanvasById, refreshAllCanvasCollections, removeJoinedCanvasAccess, session?.user?.id, warnPermissionIssue, warnSchemaNotDeployed]);
 
   const flushPendingCanvasSync = useCallback(async () => {
     if (!session?.user?.id) return;
@@ -1684,6 +1738,9 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
 
   useEffect(() => {
     if (!enabled) {
+      if (session?.user?.id) {
+        void refreshAllCanvasCollectionsThrottled(session.user.id);
+      }
       setIsCanvasLoading(false);
       return;
     }
@@ -1737,7 +1794,27 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       }
       setIsCanvasLoading(false);
     }
-  }, [enabled, session?.user?.id, loadCanvas]);
+  }, [enabled, loadCanvas, refreshAllCanvasCollectionsThrottled, session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    if (canvases.length > 0) return;
+    if (isLoadingRef.current) return;
+
+    let cancelled = false;
+    void (async () => {
+      const bootstrapOwned = await ensureSingleBootstrapCanvas(session.user.id);
+      if (cancelled || !bootstrapOwned?.id) return;
+      await refreshAllCanvasCollectionsThrottled(session.user.id, {
+        force: true,
+        minGapMs: 0,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canvases.length, ensureSingleBootstrapCanvas, refreshAllCanvasCollectionsThrottled, session?.user?.id]);
 
   useEffect(() => {
     if (!enabled || !session?.user?.id) return;

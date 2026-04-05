@@ -1563,6 +1563,13 @@ begin
       delete from public.canvas_editor_sessions ces
       where ces.canvas_id = v_canvas_id
         and ces.user_id = v_user_id;
+
+      update public.user_canvas_state ucs
+      set
+        last_opened_canvas_id = null,
+        updated_at = now()
+      where ucs.user_id = v_user_id
+        and ucs.last_opened_canvas_id = v_canvas_id;
     end if;
 
     canvas_id := v_canvas_id;
