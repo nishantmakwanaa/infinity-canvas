@@ -20,5 +20,6 @@ This extension opens CNVS (`https://canvas.nishantmakwana.tech`) as a resizable 
 ## Usage
 
 - Click the extension action icon to toggle the panel.
-- Optional shortcut: `Ctrl+Shift+Y` (`Command+Shift+Y` on macOS).
+- Optional shortcut: `Ctrl+Shift+9` (`Command+Shift+9` on macOS).
 - Drag the vertical handle on the panel edge to resize split width.
+- The extension does not redirect the current tab. On restricted pages (`chrome://`, web store, internal browser pages), the panel cannot be injected.

@@ -254,10 +254,10 @@ export function CanvasSidebar({
       )}
       <div className="h-14 px-3 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 bg-foreground flex items-center justify-center">
-            <span className="text-background text-[10px] font-bold font-mono">C</span>
+          <div className="w-8 h-8 bg-foreground flex items-center justify-center">
+            <span className="text-background text-lg leading-none font-bold font-mono">C</span>
           </div>
-          <span className="text-xs font-mono font-semibold tracking-tight text-foreground">CNVS</span>
+          <span className="text-sm font-mono font-semibold tracking-tight text-foreground">CNVS</span>
         </div>
         {onCreateCanvas && (
           <button

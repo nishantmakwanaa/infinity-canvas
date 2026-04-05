@@ -631,10 +631,10 @@ export function AppHeader({
           )}
           {isGuestUser ? (
             <div className="flex items-center gap-2 select-none">
-              <div className="w-7 h-7 bg-foreground flex items-center justify-center">
-                <span className="text-background text-xs font-bold font-mono">C</span>
+              <div className="w-9 h-9 bg-foreground flex items-center justify-center">
+                <span className="text-background text-lg leading-none font-bold font-mono">C</span>
               </div>
-              <span className="text-sm font-semibold tracking-tight text-foreground font-mono">CNVS</span>
+              <span className="text-base font-semibold tracking-tight text-foreground font-mono">CNVS</span>
             </div>
           ) : (
             <>

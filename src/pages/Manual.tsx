@@ -13,10 +13,10 @@ export default function Manual() {
             <ArrowLeft size={18} />
           </Link>
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-foreground flex items-center justify-center">
-              <span className="text-background text-[10px] font-bold font-mono">C</span>
+            <div className="w-8 h-8 bg-foreground flex items-center justify-center">
+              <span className="text-background text-lg leading-none font-bold font-mono">C</span>
             </div>
-            <span className="text-sm font-semibold tracking-tight font-mono">CNVS</span>
+            <span className="text-base font-semibold tracking-tight font-mono">CNVS</span>
           </div>
         </div>
       </header>
