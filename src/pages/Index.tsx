@@ -549,7 +549,6 @@ const Index = () => {
   }, [deleteCanvases, navigate, rawUserToken]);
 
   useEffect(() => {
-    if (rawUserToken) return;
     const pendingAction = pendingSidebarActionRef.current;
     if (!pendingAction) return;
     pendingSidebarActionRef.current = null;

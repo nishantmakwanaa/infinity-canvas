@@ -392,7 +392,7 @@ export function useSocketCanvasCollaboration(
       transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
-      reconnectionDelay: 400,
+      reconnectionDelay: 5000,
       reconnectionDelayMax: 5000,
       timeout: 10000,
     });
