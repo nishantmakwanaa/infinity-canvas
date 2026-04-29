@@ -267,11 +267,10 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
     canvasEl.classList.toggle('cnvs-zoom-through-embeds', active);
   };
 
-  const enableEmbedZoomThrough = () => setEmbedZoomThrough(true);
+  const enableEmbedZoomThrough = useCallback(() => setEmbedZoomThrough(true), []);
+  const disableEmbedZoomThrough = useCallback(() => setEmbedZoomThrough(false), []);
 
-  const disableEmbedZoomThrough = () => setEmbedZoomThrough(false);
-
-  const scheduleEmbedZoomThroughOff = (delay = 140) => {
+  const scheduleEmbedZoomThroughOff = useCallback((delay = 140) => {
     if (embedZoomResetTimerRef.current !== null) {
       window.clearTimeout(embedZoomResetTimerRef.current);
     }
@@ -279,7 +278,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
       disableEmbedZoomThrough();
       embedZoomResetTimerRef.current = null;
     }, delay);
-  };
+  }, [disableEmbedZoomThrough]);
 
   const handleEmbedPointerDown = () => {
     // Ensure provider controls stay clickable on mobile after any zoom gesture.
@@ -336,7 +335,7 @@ export function MediaBlock({ block, readOnly }: { block: CanvasBlock; readOnly?:
       }
       disableEmbedZoomThrough();
     };
-  }, []);
+  }, [disableEmbedZoomThrough]);
 
   useEffect(() => {
     if (videoRef.current) {

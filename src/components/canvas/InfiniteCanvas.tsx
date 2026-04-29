@@ -512,7 +512,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     setMenu({ open: true, x: e.clientX, y: e.clientY, canvasX, canvasY, blockId });
   };
 
-  const getViewportCenterCanvasPoint = () => {
+  const getViewportCenterCanvasPoint = useCallback(() => {
     const bounds = containerRef.current?.getBoundingClientRect();
     const left = bounds?.left || 0;
     const top = bounds?.top || 0;
@@ -523,14 +523,14 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       x: (left + width / 2 - left - state.pan.x) / state.zoom,
       y: (top + height / 2 - top - state.pan.y) / state.zoom,
     };
-  };
+  }, []);
 
-  const getPasteTargetPoint = () => {
+  const getPasteTargetPoint = useCallback(() => {
     if (menu.open) {
       return { x: menu.canvasX, y: menu.canvasY };
     }
     return getViewportCenterCanvasPoint();
-  };
+  }, [getViewportCenterCanvasPoint, menu.canvasX, menu.canvasY, menu.open]);
 
   const getEditableElement = (blockId: string) => {
     const blockRoot = document.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement | null;
@@ -561,7 +561,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     return false;
   };
 
-  const readCopiedCanvasBlocks = (): CopiedBlockPayload | null => {
+  const readCopiedCanvasBlocks = useCallback((): CopiedBlockPayload | null => {
     try {
       const raw = localStorage.getItem(CANVAS_BLOCK_CLIPBOARD_KEY);
       if (!raw) return null;
@@ -578,9 +578,9 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
     } catch {
       return null;
     }
-  };
+  }, []);
 
-  const insertCopiedBlocks = (payload: CopiedBlockPayload, targetPoint: { x: number; y: number }) => {
+  const insertCopiedBlocks = useCallback((payload: CopiedBlockPayload, targetPoint: { x: number; y: number }) => {
     const sourceBlocks = payload.blocks || [];
     if (!sourceBlocks.length) return;
 
@@ -607,7 +607,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
       selectedBlockIds: clonedBlocks.map((block) => block.id),
       activeTool: 'select',
     }));
-  };
+  }, []);
 
   const handlePaste = useCallback(async (clipboardData?: DataTransfer | null) => {
     const targetPoint = getPasteTargetPoint();
@@ -754,7 +754,7 @@ export function InfiniteCanvas({ readOnly, leftOffsetPercent = 0, loading = fals
 
     createSimpleBlock('note', { content: text });
     toast.success('Note block created from text');
-  }, [addBlock, getPasteTargetPoint, insertCopiedBlocks, readCopiedCanvasBlocks]);
+  }, [addBlock, getPasteTargetPoint, insertCopiedBlocks, readCopiedCanvasBlocks, updateBlock]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {

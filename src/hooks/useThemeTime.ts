@@ -43,5 +43,5 @@ export function useThemeTime(options?: UseThemeTimeOptions) {
     update();
     const interval = setInterval(update, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [options?.forceAutoOnOpen]);
 }

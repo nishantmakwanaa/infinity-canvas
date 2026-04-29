@@ -182,14 +182,31 @@ export const useCanvasStore = create<CanvasState>((set) => ({
     const migrated = blocks.map((b: any) =>
       b.type === 'image' ? { ...b, type: 'media' as BlockType } : b
     );
-    set((state) => ({
-      blocks: migrated,
-      pan,
-      zoom: Math.min(8, Math.max(0.05, zoom)),
-      drawingElements: drawings || [],
-      selectedBlockId: state.selectedBlockId && migrated.some((b) => b.id === state.selectedBlockId) ? state.selectedBlockId : null,
-      selectedBlockIds: state.selectedBlockIds.filter((id) => migrated.some((b) => b.id === id)),
-      activeTool: state.activeTool,
-    }));
+    set((state) => {
+      const selectedIds = new Set(state.selectedBlockIds);
+      
+      // Smart merge: Use incoming blocks, but for currently selected blocks, 
+      // we might want to keep some local properties if they are being manipulated.
+      // For now, we'll still overwrite the properties but we'll ensure we don't
+      // drop blocks that were just added locally but aren't in the remote snapshot yet.
+      
+      const remoteIds = new Set(migrated.map(b => b.id));
+      const localOnlyBlocks = state.blocks.filter(b => !remoteIds.has(b.id) && selectedIds.has(b.id));
+      
+      const mergedBlocks = [
+        ...migrated,
+        ...localOnlyBlocks // Keep local blocks if they are selected/being worked on
+      ];
+
+      return {
+        blocks: mergedBlocks,
+        pan,
+        zoom: Math.min(8, Math.max(0.05, zoom)),
+        drawingElements: drawings || [],
+        selectedBlockId: state.selectedBlockId && mergedBlocks.some((b) => b.id === state.selectedBlockId) ? state.selectedBlockId : null,
+        selectedBlockIds: state.selectedBlockIds.filter((id) => mergedBlocks.some((b) => b.id === id)),
+        activeTool: state.activeTool,
+      };
+    });
   },
 }));

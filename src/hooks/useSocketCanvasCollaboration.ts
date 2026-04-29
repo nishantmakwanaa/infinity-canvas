@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-// @ts-ignore - local node_modules may be stale until npm install is run.
 import { io, type Socket } from 'socket.io-client';
 import { supabase } from '@/integrations/supabase/client';
 import { useCanvasStore, type ActiveTool, type CanvasBlock, type DrawingElement } from '@/store/canvasStore';
@@ -279,7 +278,7 @@ export function useSocketCanvasCollaboration(
   const broadcastViewport = useCallback((pan: { x: number; y: number }, zoom: number) => {
     void pan;
     void zoom;
-  }, [canvasId, identity]);
+  }, []);
 
   const broadcastSnapshot = useCallback((
     blocks: CanvasBlock[],

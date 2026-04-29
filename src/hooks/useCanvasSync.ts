@@ -244,6 +244,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
   const collectionsRefreshInFlightRef = useRef(false);
   const lastCollectionsRefreshAtRef = useRef(0);
   const accessRecoveryInFlightRef = useRef(false);
+  const lastFlushErrorRef = useRef<string | null>(null);
   const [canvases, setCanvases] = useState<CanvasMeta[]>([]);
   const [sharedCanvases, setSharedCanvases] = useState<CanvasMeta[]>([]);
   const [shareAccessByCanvasId, setShareAccessByCanvasId] = useState<Record<string, CanvasAccessLevel>>({});
@@ -1710,8 +1711,8 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       flushSoonTimeoutRef.current = setTimeout(() => {
         flushSoonTimeoutRef.current = undefined;
         void flushPendingCanvasSync();
-      }, 240);
-    }, 120);
+      }, 600);
+    }, 300);
   }, [canWriteCanvas, flushPendingCanvasSync, session]);
 
   const saveGuestCanvas = useCallback(() => {
@@ -1916,7 +1917,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       refreshCollections(true);
     };
 
-    const intervalId = window.setInterval(() => refreshCollections(false), 20_000);
+    const intervalId = window.setInterval(() => refreshCollections(false), 120_000);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('focus', onFocus);
     window.addEventListener('cnvs-share-access-updated', onShareAccessUpdated as EventListener);
@@ -1969,7 +1970,7 @@ export function useCanvasSync(session: Session | null, options?: UseCanvasSyncOp
       if (isLoadingRef.current) return;
       void refreshAllCanvasCollectionsThrottled(userId, {
         force: true,
-        minGapMs: 800,
+        minGapMs: 3000,
       });
     };
 

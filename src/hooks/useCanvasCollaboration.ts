@@ -146,7 +146,7 @@ export function useCanvasCollaboration(
     // Viewport syncing is intentionally disabled to keep each user's camera independent.
     void pan;
     void zoom;
-  }, [identity]);
+  }, []);
 
   const broadcastSnapshot = useCallback((
     blocks: CanvasBlock[],
